@@ -1,0 +1,112 @@
+{
+  "title": "Portalinmobiliario Property Scraper",
+  "description": "Scrape property data from portalinmobiliario.com by place, URL, or specific listing URLs.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "scrapeMode": {
+      "title": "Scrape mode",
+      "type": "string",
+      "description": "overview (search cards only) or detail (opens each listing).",
+      "default": "overview",
+      "enum": [
+        "overview",
+        "detail"
+      ],
+      "editor": "select"
+    },
+    "searchMode": {
+      "title": "Search by",
+      "type": "string",
+      "description": "Build URL by place, use a full search URL, or provide listing URLs.",
+      "default": "byPlace",
+      "enum": [
+        "byPlace",
+        "bySearchUrl",
+        "byListingUrl"
+      ],
+      "editor": "select"
+    },
+    "operation": {
+      "title": "Operation",
+      "type": "string",
+      "description": "Used when searchMode=byPlace.",
+      "default": "venta",
+      "enum": [
+        "venta",
+        "arriendo",
+        "arriendo-temporal"
+      ],
+      "editor": "select"
+    },
+    "propertyType": {
+      "title": "Property type",
+      "type": "string",
+      "description": "Used when searchMode=byPlace.",
+      "default": "departamento",
+      "enum": [
+        "departamento",
+        "casa",
+        "oficina",
+        "terreno",
+        "parcela",
+        "local",
+        "bodega"
+      ],
+      "editor": "select"
+    },
+    "location": {
+      "title": "Location slug",
+      "type": "string",
+      "description": "Example: santiago-metropolitana",
+      "default": "santiago-metropolitana",
+      "editor": "textfield"
+    },
+    "condition": {
+      "title": "Condition",
+      "type": "string",
+      "description": "Optional condition path segment in byPlace mode.",
+      "default": "any",
+      "enum": [
+        "any",
+        "propiedades-usadas",
+        "propiedades-nuevas"
+      ],
+      "editor": "select"
+    },
+    "searchUrl": {
+      "title": "Search URL",
+      "type": "string",
+      "description": "Used when searchMode=bySearchUrl.",
+      "editor": "textfield"
+    },
+    "listingUrls": {
+      "title": "Listing URLs",
+      "type": "array",
+      "description": "Used when searchMode=byListingUrl.",
+      "editor": "stringList",
+      "items": {
+        "type": "string"
+      }
+    },
+    "maxResults": {
+      "title": "Max results",
+      "type": "integer",
+      "description": "Maximum number of items to output.",
+      "default": 100,
+      "minimum": 1
+    },
+    "maxPages": {
+      "title": "Max search pages",
+      "type": "integer",
+      "description": "Only used for byPlace and bySearchUrl.",
+      "default": 5,
+      "minimum": 1
+    },
+    "proxyConfiguration": {
+      "title": "Proxy configuration",
+      "type": "object",
+      "description": "Optional Apify proxy settings."
+    }
+  }
+}

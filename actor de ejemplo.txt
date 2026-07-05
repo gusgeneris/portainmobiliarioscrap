@@ -1,0 +1,371 @@
+Portalinmobiliario Scraper — Chile Property Data & API 🏠
+SIÁN Agency Store Idealista Scraper Immobiliare Scraper Zillow Scraper
+
+🎉 Every Portalinmobiliario listing — price in UF & CLP, GPS, photos & full spec sheet — in clean JSON, no account or API key
+For analysts, brokers and developers building a Chilean real-estate data pipeline
+📋 Overview
+Pull live listings from Portalinmobiliario — Chile's #1 property marketplace — into a clean, structured dataset. Search any region or comuna for sale (venta), rent (arriendo) or short-term (arriendo temporal), and get back price (in UF and CLP), useful & total area, bedrooms, bathrooms, parking, storage, address, GPS coordinates, the full photo gallery, gastos comunes and a complete spec sheet — ready for Excel, a database or your own API.
+
+Why professionals choose this scraper:
+
+✅ Chile's #1 portal, fully covered: departamentos, casas, oficinas, terrenos and more — venta, arriendo & arriendo temporal across every region and comuna.
+⚡ Overview mode is fast & complete: 48 fully-populated listings per page — price, location, beds/baths, area and lead photo included, with no per-listing fetches.
+🎯 38 structured fields: UF/CLP price, condition, areas, parking, storage, floors, antiquity, gastos comunes, amenities, GPS and the full gallery.
+💸 Pay only per result: transparent per-listing pricing with a free trial — no monthly subscription, no API key, no account.
+💱 Built-in extras: live UF→CLP and USD conversion, price-per-m², and a thumbnail on every row.
+🔗 Paste any search URL: build a search on Portalinmobiliario with all your filters and paste the link — every facet and sort is preserved.
+✨ Features
+🏙️ Search by place or URL: pick operation + property type + location, or paste a full Portalinmobiliario search-results URL.
+⚡ Overview mode: cheap, high-volume listing extraction straight from the search-result cards (48 per page).
+🔍 Detail mode: open each listing for the full record — condition, full spec sheet, amenities, GPS, description and the whole photo gallery — and it still carries every overview field, so detail rows are never sparse.
+💱 Dual currency: every price kept in its native unit (UF or CLP) and converted to USD at the run's live FX rate.
+📐 Price per m²: computed automatically for fast comparables.
+📍 GPS coordinates: latitude/longitude on every detail listing — map them instantly.
+🖼️ All photos: full hi-res gallery URLs plus a cover thumbnail per row.
+🏠 By listing URLs: paste exact property URLs or MLC ids to scrape a specific shortlist.
+📤 Export anywhere: JSON, CSV or Excel straight from the dataset.
+🎬 Quick Start
+Pick a scrape mode, tell it a location (or paste a search URL), and run. Results stream into the dataset as they're found. Start in Overview mode — it already includes price, location and photos.
+
+curl -X POST "https://api.apify.com/v2/acts/sian.agency~portalinmobiliario-property-scraper/runs?token=YOUR_TOKEN" \
+-H 'Content-Type: application/json' \
+-d '{"scrapeMode":"overview","searchMode":"byPlace","operation":"venta","propertyType":"departamento","location":"santiago-metropolitana","maxResults":50}'
+
+🚀 Getting Started (3 Simple Steps)
+Step 1: Choose a mode
+Pick Overview (fast, cheap list) or Detail (full record per listing).
+
+Step 2: Tell it where to look
+Set operation + property type + location (e.g. venta · departamento · santiago-metropolitana), or paste a Portalinmobiliario search URL.
+
+Step 3: Run
+Press Start and watch listings stream into your dataset.
+
+That's it! In under a minute, you'll have:
+
+A clean table of Chilean property listings
+Price in UF & CLP (plus USD), area, rooms, location & photos
+A one-click JSON / CSV / Excel export
+📥 Input Configuration
+Field	Type	Required	Description
+scrapeMode	string	No	overview (cheap list) or detail (full record). Default overview.
+searchMode	string	No	byPlace, bySearchUrl, or byListingUrl (detail only). Default byPlace.
+operation	string	No	venta (sale), arriendo (rent), arriendo-temporal. Used in byPlace.
+propertyType	string	No	departamento, casa, oficina, terreno, parcela, local, bodega.
+location	string	No	Region/comuna slug, e.g. santiago-metropolitana, vina-del-mar-valparaiso.
+condition	string	No	any, propiedades-usadas (used) or propiedades-nuevas (new).
+sort	string	No	relevance, price_asc, price_desc.
+searchUrl	string	No	Paste a Portalinmobiliario search URL — every filter & sort preserved.
+listingUrls	array	No	Exact property URLs or MLC ids (detail mode).
+maxResults	integer	No	Cap on listings per run. FREE: 25. PAID: unlimited. Default 100.
+maxPages	integer	No	Max search pages to walk (48 each). Default 5.
+Example (by place):
+
+{
+  "scrapeMode": "detail",
+  "searchMode": "byPlace",
+  "operation": "venta",
+  "propertyType": "departamento",
+  "location": "providencia-metropolitana",
+  "maxResults": 30
+}
+
+Example (by search URL):
+
+{
+  "scrapeMode": "overview",
+  "searchMode": "bySearchUrl",
+  "searchUrl": "https://www.portalinmobiliario.com/venta/departamento/propiedades-usadas/santiago-metropolitana"
+}
+
+📤 Output
+Results are saved to the Apify dataset with 38 fields including:
+
+Field	Type	Description
+id	string	Mercado Libre Chile id (MLC-XXXXXXXXXX) — stable join key
+url	string	Canonical listing URL
+propertyTitle	string	Listing title
+operation	string	venta · arriendo · arriendo-temporal
+property_type	string	Departamento, Casa, Oficina, Terreno…
+price	number	Price in the listing's own currency
+currency	string	UF (Unidad de Fomento) or CLP (peso)
+priceUsd	number	Price converted to USD at the run's live FX rate
+pricePerM2	number	Price per m² (listing currency)
+useful_area / total_area	string	Superficie útil / total
+bedrooms / bathrooms	integer	Dormitorios / baños
+parking / storage	integer	Estacionamientos / bodegas
+maintenance_fee	string	Gastos comunes
+location	string	Address line
+latitude / longitude	number	GPS coordinates (detail mode)
+amenities	array	Gym, lift, A/C, etc. (detail mode)
+images	array	Full photo gallery
+Example:
+
+{
+  "thumbnail": "https://http2.mlstatic.com/D_NQ_NP_2X_700443-MLC...-F.webp",
+  "id": "MLC-1933316335",
+  "url": "https://www.portalinmobiliario.com/MLC-1933316335-...-_JM",
+  "source": "detail",
+  "propertyTitle": "Eco Arauco - Fundamenta",
+  "operation": "venta",
+  "property_type": "Departamento",
+  "condition": "Nuevo",
+  "price": 2934,
+  "currency": "UF",
+  "priceUsd": 118879.58,
+  "pricePerM2": 68.23,
+  "useful_area": "43 m²",
+  "bedrooms": 1,
+  "bathrooms": 1,
+  "parking": 1,
+  "maintenance_fee": "65.000 CLP",
+  "location": "San Diego 2044, Santiago",
+  "latitude": -33.4691,
+  "longitude": -70.6420,
+  "amenities": ["Gimnasio", "Ascensor"],
+  "images": ["https://http2.mlstatic.com/..."]
+}
+
+💼 Use Cases & Examples
+1. Real-Estate Market Research
+Analysts tracking Chilean property supply and price trends.
+
+Input: A region or comuna + operation Output: Every active listing with price (UF & CLP), area and location Use: Build supply dashboards and track median UF/m² by comuna over time.
+
+2. UF-per-m² Benchmarking
+Brokers pricing a new listing against the market.
+
+Input: A target comuna + property type Output: pricePerM2 on every comparable listing Use: Set a competitive asking price backed by live comps.
+
+3. Investor Deal-Flow
+Property investors hunting under-priced units.
+
+Input: Sort by price_asc + a price-filtered search URL Output: Cheapest listings first, with full spec sheet in detail mode Use: Surface opportunities and shortlist by yield potential.
+
+4. PropTech Data Pipelines
+Developers powering a Chilean property app or model.
+
+Input: Scheduled runs by region Output: Clean JSON with a stable MLC id join key Use: Keep an always-fresh listings table behind your product.
+
+5. Lead & Inventory Lists
+Agencies building outreach or inventory lists.
+
+Input: A search URL with your filters Output: Titles, locations, photos and contact context Use: Feed a CRM or generate inventory reports.
+
+6. Comparable (Comps) Analysis
+Appraisers and lenders valuing a property.
+
+Input: Detail mode on a comuna Output: Areas, condition, antiquity, gastos comunes and GPS Use: Assemble a defensible comps set in minutes.
+
+🔗 Integration Examples
+JavaScript/Node.js
+import { ApifyClient } from 'apify-client';
+const client = new ApifyClient({ token: 'YOUR_TOKEN' });
+
+const run = await client.actor('sian.agency/portalinmobiliario-property-scraper').call({
+  scrapeMode: 'overview',
+  searchMode: 'byPlace',
+  operation: 'venta',
+  propertyType: 'departamento',
+  location: 'santiago-metropolitana',
+  maxResults: 50,
+});
+
+const { items } = await client.dataset(run.defaultDatasetId).listItems();
+console.log(items[0]);
+
+Python
+from apify_client import ApifyClient
+client = ApifyClient('YOUR_TOKEN')
+
+run = client.actor('sian.agency/portalinmobiliario-property-scraper').call(
+    run_input={
+        'scrapeMode': 'detail',
+        'searchMode': 'byPlace',
+        'operation': 'arriendo',
+        'propertyType': 'departamento',
+        'location': 'providencia-metropolitana',
+        'maxResults': 30,
+    }
+)
+
+for item in client.dataset(run['defaultDatasetId']).iterate_items():
+    print(item)
+
+cURL
+curl -X POST 'https://api.apify.com/v2/acts/sian.agency~portalinmobiliario-property-scraper/runs?token=YOUR_TOKEN' \
+-H 'Content-Type: application/json' \
+-d '{"scrapeMode":"overview","searchMode":"byPlace","location":"santiago-metropolitana"}'
+
+Automation Workflows (N8N / Zapier / Make)
+Trigger: Schedule or webhook
+HTTP Request: Call the actor API
+Process: Handle the JSON results
+Action: Save to a sheet, notify, or transform
+📊 Performance & Pricing
+FREE Tier (Try It Now)
+25 listings per run — full feature access, same quality
+No credit card required
+Perfect for testing and small projects
+PAID Tier (Production Ready)
+Unlimited listings per run
+Pay-per-result: only charged for listings actually delivered
+A cheap, high-volume Overview event and a richer Detail event
+💸 Transparent pay-per-result — no monthly subscription, no API key.
+
+🔗 View current pricing
+
+❓ Frequently Asked Questions
+Q: How many listings can I scrape? A: FREE tier: 25 per run. PAID tier: unlimited.
+
+Q: Why are some prices in UF and some in CLP? A: Chile quotes property in UF (an inflation-indexed unit) or CLP (pesos). Each row keeps its native currency and a USD conversion at the run's live FX rate.
+
+Q: Does Detail mode lose the list fields? A: No — Detail rows merge in every Overview field, so each detail record is complete.
+
+Q: What output formats are available? A: JSON, CSV, Excel — export directly from the Apify dataset.
+
+Q: Can I use my own search filters? A: Yes. Build a search on Portalinmobiliario and paste the URL with bySearchUrl — every filter and sort is preserved.
+
+Q: Do I need an account or API key for the site? A: No. Just your Apify token.
+
+Q: How fresh is the data? A: Every run reads live listings at the moment it runs.
+
+🐛 Troubleshooting
+No results returned
+
+Check the location slug matches a real Portalinmobiliario URL (e.g. santiago-metropolitana).
+In bySearchUrl, confirm the URL opens a results page in your browser.
+Fewer results than expected
+
+Raise maxResults and maxPages. FREE tier caps at 25 listings/run.
+Detail mode is slower than Overview
+
+Expected — Detail opens each listing page. Use Overview for high-volume list pulls and Detail for the records you need enriched.
+⚖️ Is it legal to scrape data?
+Our actors are ethical and do not extract any private user data, such as email addresses, gender, or location. They only extract what the user has chosen to share publicly. We therefore believe that our actors, when used for ethical purposes by Apify users, are safe.
+
+However, you should be aware that your results could contain personal data. Personal data is protected by the GDPR in the European Union and by other regulations around the world. You should not scrape personal data unless you have a legitimate reason to do so. If you're unsure whether your reason is legitimate, consult your lawyers.
+
+You can also read Apify's blog post on the legality of web scraping.
+
+🏷️ Trademark Disclaimer
+Portalinmobiliario, Mercado Libre, and all related names, logos and brands are trademarks of their respective owners. SIÁN Agency is not affiliated with, endorsed by, or sponsored by Portalinmobiliario or Mercado Libre. This actor is an independent tool that accesses publicly available information for legitimate data-analysis purposes only.
+
+🤝 Support
+Telegram Support
+
+Join our active support community
+
+For issues or questions, open an issue in the actor's repository
+Check the SIÁN Agency Store for more automation tools
+📧 apify@sian-agency.online
+
+
+
+Scrape Portalinmobiliario.cl — Chile's #1 property marketplace — into clean structured datasets: sale & rent listings with price (UF or CLP), area, bedrooms, baths, parking, address, GPS, photos & full spec sheet. One operation per run, one clean dataset out. No account or API key needed.
+
+🎯 Use Cases: Real-estate market research · Price & UF-per-m² benchmarking · Lead & inventory lists · Comparable (comps) analysis · PropTech data pipelines · Investor deal-flow
+
+✨ More by SIÁN Agency:
+
+Idealista Property Scraper — Spain, Italy & Portugal listings
+Immobiliare Property Scraper — Italy's #1 portal
+Browse all SIÁN actors →
+⭐ Love our actors? Leave a 5-star review — it helps us build more features for you.
+
+
+🧭 Scrape mode
+📋 Overview — fast list (cheapest)
+
+
+🎯 Search by
+📍 By place (operation + type + location)
+
+📍 By place
+Build the search from operation + property type + location (used when Search by = By place).
+
+💼 Operation
+🏷️ Venta (sale)
+
+🏘️ Property type
+🏢 Departamento
+
+📍 Location slug
+santiago-metropolitana
+🆕 Condition (optional)
+Any
+
+↕️ Sort
+Relevance
+
+🔗 By search URL
+Paste a search URL instead of building from parts.
+
+🔗 Search URL
+🏠 By listing URLs
+Provide exact property URLs/ids (detail mode only).
+
+🏠 Listing URLs (detail mode)
+Add
+
+Bulk edit
+Text file
+🔢 Max results
+100
+
+
+📄 Max search pages
+5
+
+
+Run options
+MAXIMUM COST PER RUN
+
+Unlimited
+
+BUILD
+
+latest
+
+TIMEOUT
+
+3,600s
+
+MEMORY
+
+2 GB
+
+Actor running slowly or crashing? Try increasing memory.
+
+Build
+latest
+
+Timeout
+3600
+seconds
+
+
+No timeout
+
+
+Memory
+2 GB
+
+Maximum cost per run
+(optional)
+1
+USD
+
+
+
+
+No maximum limit
+Save & start
+Save
+Cancel changes
+
+These settings only apply to Actor runs started from Apify Console. Learn how to provide input when starting the Actor via the API.
+
+
+
+

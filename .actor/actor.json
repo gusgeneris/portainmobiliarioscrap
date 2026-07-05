@@ -1,0 +1,12 @@
+{
+  "actorSpecification": 1,
+  "name": "portalinmobiliario-search-scraper",
+  "title": "Portalinmobiliario Search Scraper",
+  "description": "Scrapes search and listing details from portalinmobiliario.com (Chile).",
+  "version": "0.0",
+  "meta": {
+    "templateId": "js-crawlee-cheerio"
+  },
+  "input": "./input_schema.json",
+  "dockerfile": "../Dockerfile"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "portalinmobiliario-apify-actor",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Apify actor to scrape portalinmobiliario.com listings in Chile",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/main.js"
+  },
+  "dependencies": {
+    "apify": "^3.4.4",
+    "crawlee": "^3.13.6"
+  }
+}
