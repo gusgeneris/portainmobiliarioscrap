@@ -89,38 +89,45 @@
     },
     "minPrice": {
       "title": "Precio mínimo",
-      "type": "number",
-      "description": "Filtro por precio mínimo en la moneda del aviso."
+      "type": "string",
+      "description": "Filtro por precio mínimo en la moneda del aviso (acepta string o número).",
+      "editor": "textfield"
     },
     "maxPrice": {
       "title": "Precio máximo",
-      "type": "number",
-      "description": "Filtro por precio máximo en la moneda del aviso."
+      "type": "string",
+      "description": "Filtro por precio máximo en la moneda del aviso (acepta string o número).",
+      "editor": "textfield"
     },
     "minBedrooms": {
       "title": "Dormitorios mínimo",
-      "type": "integer",
-      "description": "Cantidad mínima de dormitorios."
+      "type": "string",
+      "description": "Cantidad mínima de dormitorios (acepta string o número).",
+      "editor": "textfield"
     },
     "maxBedrooms": {
       "title": "Dormitorios máximo",
-      "type": "integer",
-      "description": "Cantidad máxima de dormitorios."
+      "type": "string",
+      "description": "Cantidad máxima de dormitorios (acepta string o número).",
+      "editor": "textfield"
     },
     "minBathrooms": {
       "title": "Baños mínimo",
-      "type": "integer",
-      "description": "Cantidad mínima de baños."
+      "type": "string",
+      "description": "Cantidad mínima de baños (acepta string o número).",
+      "editor": "textfield"
     },
     "maxBathrooms": {
       "title": "Baños máximo",
-      "type": "integer",
-      "description": "Cantidad máxima de baños."
+      "type": "string",
+      "description": "Cantidad máxima de baños (acepta string o número).",
+      "editor": "textfield"
     },
     "minParking": {
       "title": "Estacionamientos mínimo",
-      "type": "integer",
-      "description": "Cantidad mínima de estacionamientos."
+      "type": "string",
+      "description": "Cantidad mínima de estacionamientos (acepta string o número).",
+      "editor": "textfield"
     },
     "searchUrl": {
       "title": "Search URL",
@@ -139,17 +146,17 @@
     },
     "maxResults": {
       "title": "Max results",
-      "type": "integer",
-      "description": "Maximum number of items to output.",
-      "default": 5,
-      "minimum": 1
+      "type": "string",
+      "description": "Maximum number of items to output (acepta string o número).",
+      "default": "5",
+      "editor": "textfield"
     },
     "maxPages": {
       "title": "Max search pages",
-      "type": "integer",
-      "description": "Only used for byPlace and bySearchUrl.",
-      "default": 5,
-      "minimum": 1
+      "type": "string",
+      "description": "Only used for byPlace and bySearchUrl (acepta string o número).",
+      "default": "5",
+      "editor": "textfield"
     },
     "proxyConfiguration": {
       "title": "Proxy configuration",

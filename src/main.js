@@ -65,9 +65,15 @@ const parseIntOrNull = (value) => {
     return Number.isNaN(parsed) ? null : parsed;
 };
 
+const parsePositiveIntWithDefault = (value, defaultValue) => {
+    const parsed = parseIntOrNull(value);
+    if (parsed == null || parsed <= 0) return defaultValue;
+    return parsed;
+};
+
 const buildFilters = (input) => ({
-    minPrice: input.minPrice ?? null,
-    maxPrice: input.maxPrice ?? null,
+    minPrice: parseNumber(input.minPrice),
+    maxPrice: parseNumber(input.maxPrice),
     minBedrooms: parseIntOrNull(input.minBedrooms),
     maxBedrooms: parseIntOrNull(input.maxBedrooms),
     minBathrooms: parseIntOrNull(input.minBathrooms),
@@ -102,10 +108,18 @@ const parseSummaryByRegex = (text) => {
     const bathrooms = body.match(/(\d+)\s*b(?:añ|an)(?:o|os)/i)?.[1] ?? null;
     const parking = body.match(/(\d+)\s*estacionamientos?/i)?.[1] ?? null;
     const storage = body.match(/(\d+)\s*bodegas?/i)?.[1] ?? null;
-    const areas = [
-        ...[...body.matchAll(/(\d+\s*-\s*\d+|\d+[.,]?\d*)\s*m(?:²|2)?\s*(?:útiles|totales)?/gi)].map((m) => m[0]),
-        ...[...body.matchAll(/(\d+\s*-\s*\d+|\d+[.,]?\d*)\s*m/gi)].map((m) => m[0]),
-    ];
+    const usefulAreaMatch = body.match(/(\d+\s*-\s*\d+|\d+[.,]?\d*)\s*m(?:²|2)?\s*útiles?/i);
+    const totalAreaMatch = body.match(/(\d+\s*-\s*\d+|\d+[.,]?\d*)\s*m(?:²|2)?\s*totales?/i);
+
+    let usefulArea = usefulAreaMatch ? `${usefulAreaMatch[1]} m² útiles` : null;
+    let totalArea = totalAreaMatch ? `${totalAreaMatch[1]} m² totales` : null;
+
+    // Fallback for pages where areas are unlabeled and shown as two values.
+    if (!usefulArea || !totalArea) {
+        const genericAreas = [...body.matchAll(/(\d+\s*-\s*\d+|\d+[.,]?\d*)\s*m(?:²|2)/gi)].map((m) => m[1]);
+        if (!usefulArea && genericAreas[0]) usefulArea = `${genericAreas[0]} m²`;
+        if (!totalArea && genericAreas[1]) totalArea = `${genericAreas[1]} m²`;
+    }
 
     const maintenanceMatch = body.match(/gastos?\s+comunes?[^\d]{0,20}([\d.\s,]+(?:UF|CLP)?)/i);
     const maintenanceFee = maintenanceMatch ? cleanText(maintenanceMatch[1]) : null;
@@ -115,8 +129,8 @@ const parseSummaryByRegex = (text) => {
         bathrooms: bathrooms ? Number(bathrooms) : null,
         parking: parking ? Number(parking) : null,
         storage: storage ? Number(storage) : null,
-        useful_area: areas[0] || null,
-        total_area: areas[1] || null,
+        useful_area: usefulArea,
+        total_area: totalArea,
         maintenance_fee: maintenanceFee,
     };
 };
@@ -339,10 +353,13 @@ const {
     modality = 'any',
     searchUrl,
     listingUrls = [],
-    maxResults = 5,
-    maxPages = 5,
+    maxResults,
+    maxPages,
     proxyConfiguration,
 } = input;
+
+const maxResultsLimit = parsePositiveIntWithDefault(maxResults, 5);
+const maxPagesLimit = parsePositiveIntWithDefault(maxPages, 5);
 const filters = buildFilters(input);
 
 if (searchMode === 'bySearchUrl' && !searchUrl) {
@@ -398,7 +415,7 @@ const crawler = new CheerioCrawler({
     proxyConfiguration: proxy,
     maxRequestRetries: 2,
     async requestHandler({ request, $, log: crawlerLog }) {
-        if (outputCount >= maxResults) return;
+        if (outputCount >= maxResultsLimit) return;
 
         if (request.userData.label === 'SEARCH') {
             const pageNumber = request.userData.page || 1;
@@ -407,7 +424,7 @@ const crawler = new CheerioCrawler({
 
             let addedFromPage = 0;
             for (const rawOverview of overviews) {
-                if (outputCount >= maxResults) break;
+                if (outputCount >= maxResultsLimit) break;
                 const overview = enrichOverviewFromEmbeddedState($, rawOverview);
                 const listingUrl = overview.url;
                 if (seenListingUrls.has(listingUrl)) continue;
@@ -427,8 +444,8 @@ const crawler = new CheerioCrawler({
             }
 
             if (
-                pageNumber < maxPages &&
-                outputCount < maxResults &&
+                pageNumber < maxPagesLimit &&
+                outputCount < maxResultsLimit &&
                 addedFromPage > 0 &&
                 searchMode !== 'byListingUrl'
             ) {
@@ -453,7 +470,7 @@ const crawler = new CheerioCrawler({
             }
             await Actor.pushData(detail);
             outputCount += 1;
-            crawlerLog.info(`Saved detail ${outputCount}/${maxResults}: ${detail.id || detail.url}`);
+            crawlerLog.info(`Saved detail ${outputCount}/${maxResultsLimit}: ${detail.id || detail.url}`);
         }
     },
     failedRequestHandler({ request }) {
