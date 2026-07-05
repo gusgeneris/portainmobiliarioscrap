@@ -106,7 +106,8 @@
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "type": "object",
-      "description": "Optional Apify proxy settings."
+      "description": "Optional Apify proxy settings.",
+      "editor": "proxy"
     }
   }
 }
