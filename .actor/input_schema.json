@@ -74,6 +74,49 @@
       ],
       "editor": "select"
     },
+    "modality": {
+      "title": "Modalidad",
+      "type": "string",
+      "description": "Filtro general: usadas, nuevas o proyectos (byPlace).",
+      "default": "any",
+      "enum": [
+        "any",
+        "propiedades-usadas",
+        "propiedades-nuevas",
+        "proyectos"
+      ],
+      "editor": "select"
+    },
+    "minPrice": {
+      "title": "Precio mínimo",
+      "type": "number",
+      "description": "Filtro por precio mínimo en la moneda del aviso."
+    },
+    "maxPrice": {
+      "title": "Precio máximo",
+      "type": "number",
+      "description": "Filtro por precio máximo en la moneda del aviso."
+    },
+    "minBedrooms": {
+      "title": "Dormitorios mínimo",
+      "type": "integer"
+    },
+    "maxBedrooms": {
+      "title": "Dormitorios máximo",
+      "type": "integer"
+    },
+    "minBathrooms": {
+      "title": "Baños mínimo",
+      "type": "integer"
+    },
+    "maxBathrooms": {
+      "title": "Baños máximo",
+      "type": "integer"
+    },
+    "minParking": {
+      "title": "Estacionamientos mínimo",
+      "type": "integer"
+    },
     "searchUrl": {
       "title": "Search URL",
       "type": "string",
@@ -93,7 +136,7 @@
       "title": "Max results",
       "type": "integer",
       "description": "Maximum number of items to output.",
-      "default": 100,
+      "default": 5,
       "minimum": 1
     },
     "maxPages": {
