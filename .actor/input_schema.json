@@ -99,23 +99,28 @@
     },
     "minBedrooms": {
       "title": "Dormitorios mínimo",
-      "type": "integer"
+      "type": "integer",
+      "description": "Cantidad mínima de dormitorios."
     },
     "maxBedrooms": {
       "title": "Dormitorios máximo",
-      "type": "integer"
+      "type": "integer",
+      "description": "Cantidad máxima de dormitorios."
     },
     "minBathrooms": {
       "title": "Baños mínimo",
-      "type": "integer"
+      "type": "integer",
+      "description": "Cantidad mínima de baños."
     },
     "maxBathrooms": {
       "title": "Baños máximo",
-      "type": "integer"
+      "type": "integer",
+      "description": "Cantidad máxima de baños."
     },
     "minParking": {
       "title": "Estacionamientos mínimo",
-      "type": "integer"
+      "type": "integer",
+      "description": "Cantidad mínima de estacionamientos."
     },
     "searchUrl": {
       "title": "Search URL",
