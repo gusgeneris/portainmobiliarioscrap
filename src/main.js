@@ -51,13 +51,61 @@ const parsePrice = (priceText) => {
     return { rawPrice: raw, price, currency };
 };
 
+const decodeJsonEscapedText = (value) => {
+    if (!value) return null;
+    return value
+        .replace(/\\u([\dA-Fa-f]{4})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+        .replace(/\\\//g, '/')
+        .replace(/\\"/g, '"');
+};
+
+const parseIntOrNull = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number.parseInt(String(value), 10);
+    return Number.isNaN(parsed) ? null : parsed;
+};
+
+const buildFilters = (input) => ({
+    minPrice: input.minPrice ?? null,
+    maxPrice: input.maxPrice ?? null,
+    minBedrooms: parseIntOrNull(input.minBedrooms),
+    maxBedrooms: parseIntOrNull(input.maxBedrooms),
+    minBathrooms: parseIntOrNull(input.minBathrooms),
+    maxBathrooms: parseIntOrNull(input.maxBathrooms),
+    minParking: parseIntOrNull(input.minParking),
+});
+
+const withinRange = (value, min, max) => {
+    if (min == null && max == null) return true;
+    if (value == null) return false;
+    if (min != null && value < min) return false;
+    if (max != null && value > max) return false;
+    return true;
+};
+
+const matchesFilters = (item, filters) =>
+    withinRange(item.price, filters.minPrice, filters.maxPrice) &&
+    withinRange(item.bedrooms, filters.minBedrooms, filters.maxBedrooms) &&
+    withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
+    withinRange(item.parking, filters.minParking, null);
+
+const currencyFromPortalCode = (value) => {
+    if (value === 'CLF') return 'UF';
+    if (value === 'CLP') return 'CLP';
+    if (value === 'USD') return 'US$';
+    return value || null;
+};
+
 const parseSummaryByRegex = (text) => {
     const body = cleanText(text);
     const bedrooms = body.match(/(\d+)\s*dormitorios?/i)?.[1] ?? null;
-    const bathrooms = body.match(/(\d+)\s*bañ(?:o|os)/i)?.[1] ?? null;
+    const bathrooms = body.match(/(\d+)\s*b(?:añ|an)(?:o|os)/i)?.[1] ?? null;
     const parking = body.match(/(\d+)\s*estacionamientos?/i)?.[1] ?? null;
     const storage = body.match(/(\d+)\s*bodegas?/i)?.[1] ?? null;
-    const areas = [...body.matchAll(/(\d+[.,]?\d*)\s*m²/gi)].map((m) => m[0]);
+    const areas = [
+        ...[...body.matchAll(/(\d+\s*-\s*\d+|\d+[.,]?\d*)\s*m(?:²|2)?\s*(?:útiles|totales)?/gi)].map((m) => m[0]),
+        ...[...body.matchAll(/(\d+\s*-\s*\d+|\d+[.,]?\d*)\s*m/gi)].map((m) => m[0]),
+    ];
 
     const maintenanceMatch = body.match(/gastos?\s+comunes?[^\d]{0,20}([\d.\s,]+(?:UF|CLP)?)/i);
     const maintenanceFee = maintenanceMatch ? cleanText(maintenanceMatch[1]) : null;
@@ -101,38 +149,121 @@ const extractListingUrlsFromSearch = ($) => {
     return [...new Set(results)];
 };
 
-const extractOverviewForUrl = ($, listingUrl, pageNumber) => {
-    const listingId = extractListingId(listingUrl);
-    const anchor = listingId ? $(`a[href*="${listingId}"]`).first() : null;
-    const card = anchor && anchor.length ? anchor.closest('li,article,div') : null;
-    const title =
-        cleanText(card?.find('h2,h3').first().text()) ||
-        cleanText(anchor?.find('h2,h3').first().text()) ||
-        cleanText(anchor?.text()) ||
-        null;
-    const priceText =
-        cleanText(card?.find('.andes-money-amount,[class*="price"]').first().text()) || null;
-    const location =
-        cleanText(card?.find('[class*="location"],[class*="address"]').first().text()) || null;
-    const thumbnail = card?.find('img').first().attr('src') || null;
-    const priceInfo = parsePrice(priceText);
+const extractOverviewItems = ($, pageNumber) => {
+    const seen = new Set();
+    const output = [];
+    const cards = $('li.ui-search-layout__item, .ui-search-result__wrapper, .poly-card');
 
-    return {
+    cards.each((_, cardEl) => {
+        const card = $(cardEl);
+        const href = card.find('a[href*="MLC-"]').first().attr('href');
+        const url = normalizeListingUrl(href);
+        if (!url || seen.has(url)) return;
+        seen.add(url);
+
+        const title =
+            cleanText(card.find('h2,h3,.poly-component__title,.ui-search-item__title').first().text()) ||
+            null;
+        const location =
+            cleanText(card.find('.poly-component__location,.poly-component__subtitle,[class*="location"],[class*="address"]').first().text()) ||
+            null;
+        const thumbnail =
+            card.find('img').first().attr('src') ||
+            card.find('img').first().attr('data-src') ||
+            null;
+        const priceText = cleanText(card.find('.andes-money-amount,[class*="price"]').first().text());
+        const attributesText = cleanText(card.find('.poly-attributes-list,.ui-search-card-attributes').first().text());
+        const summary = parseSummaryByRegex(`${attributesText} ${title || ''}`);
+
+        output.push({
+            source: 'overview',
+            page: pageNumber,
+            id: extractListingId(url),
+            url,
+            propertyTitle: title,
+            location,
+            thumbnail,
+            ...parsePrice(priceText),
+            ...summary,
+        });
+    });
+
+    if (output.length > 0) return output;
+
+    // Fallback for layouts where cards are not easily identifiable.
+    return extractListingUrlsFromSearch($).map((listingUrl) => ({
         source: 'overview',
         page: pageNumber,
-        id: listingId,
+        id: extractListingId(listingUrl),
         url: listingUrl,
-        propertyTitle: title,
-        location,
-        thumbnail,
-        ...priceInfo,
+        propertyTitle: null,
+        location: null,
+        thumbnail: null,
+        rawPrice: null,
+        price: null,
+        currency: null,
+        bedrooms: null,
+        bathrooms: null,
+        parking: null,
+    }));
+};
+
+const enrichOverviewFromEmbeddedState = ($, item) => {
+    const id = item.id;
+    if (!id) return item;
+    const html = $.html();
+    const compactId = id.replace('-', '');
+    const marker = `"id":"${compactId}"`;
+    const markerIndex = html.indexOf(marker);
+    if (markerIndex < 0) return item;
+
+    const chunk = html.slice(markerIndex, markerIndex + 7000);
+    const titleMatch = chunk.match(/"type":"title","id":"title","title":\{"text":"(.*?)"/);
+    const locationMatch = chunk.match(/"type":"location","id":"location","location":\{"text":"(.*?)"/);
+    const priceMatch = chunk.match(/"current_price":\{"value":([\d.]+),"currency":"([^"]+)"/);
+    const attrsMatch = chunk.match(/"attributes_list":\{"separator":"[^"]*","texts":\[(.*?)\]\}/);
+
+    let attributesText = '';
+    if (attrsMatch?.[1]) {
+        const attrValues = [...attrsMatch[1].matchAll(/"(.*?)"/g)].map((m) => decodeJsonEscapedText(m[1]));
+        attributesText = cleanText(attrValues.join(' | '));
+    }
+
+    const title = cleanText(decodeJsonEscapedText(titleMatch?.[1])) || item.propertyTitle;
+    const location = cleanText(decodeJsonEscapedText(locationMatch?.[1])) || item.location;
+    const parsedByAttributes = parseSummaryByRegex(attributesText);
+
+    let rawPrice = item.rawPrice;
+    let price = item.price;
+    let currency = item.currency;
+    if (priceMatch) {
+        const numericValue = Number(priceMatch[1]);
+        const normalizedCurrency = currencyFromPortalCode(priceMatch[2]);
+        rawPrice = normalizedCurrency ? `${numericValue} ${normalizedCurrency}` : String(numericValue);
+        price = numericValue;
+        currency = normalizedCurrency;
+    }
+
+    return {
+        ...item,
+        propertyTitle: title || null,
+        location: location || null,
+        rawPrice: rawPrice || null,
+        price: price ?? null,
+        currency: currency || null,
+        bedrooms: parsedByAttributes.bedrooms ?? item.bedrooms ?? null,
+        bathrooms: parsedByAttributes.bathrooms ?? item.bathrooms ?? null,
+        parking: parsedByAttributes.parking ?? item.parking ?? null,
+        useful_area: parsedByAttributes.useful_area ?? item.useful_area ?? null,
+        total_area: parsedByAttributes.total_area ?? item.total_area ?? null,
     };
 };
 
-const buildSearchUrl = ({ operation, propertyType, location, condition, searchUrl }) => {
+const buildSearchUrl = ({ operation, propertyType, location, condition, modality, searchUrl }) => {
     if (searchUrl) return searchUrl;
+    const selectedCondition = modality && modality !== 'any' ? modality : condition;
     const segments = [operation || 'venta', propertyType || 'departamento'];
-    if (condition && condition !== 'any') segments.push(condition);
+    if (selectedCondition && selectedCondition !== 'any') segments.push(selectedCondition);
     segments.push(location || 'santiago-metropolitana');
     return `${BASE_URL}/${segments.map((segment) => segment.replace(/^\/+|\/+$/g, '')).join('/')}`;
 };
@@ -205,12 +336,14 @@ const {
     propertyType = 'departamento',
     location = 'santiago-metropolitana',
     condition = 'any',
+    modality = 'any',
     searchUrl,
     listingUrls = [],
-    maxResults = 100,
+    maxResults = 5,
     maxPages = 5,
     proxyConfiguration,
 } = input;
+const filters = buildFilters(input);
 
 if (searchMode === 'bySearchUrl' && !searchUrl) {
     throw new Error('searchUrl is required when searchMode is "bySearchUrl".');
@@ -245,7 +378,14 @@ if (searchMode === 'byListingUrl') {
         });
     }
 } else {
-    const initialSearchUrl = buildSearchUrl({ operation, propertyType, location, condition, searchUrl });
+    const initialSearchUrl = buildSearchUrl({
+        operation,
+        propertyType,
+        location,
+        condition,
+        modality,
+        searchUrl,
+    });
     seenSearchUrls.add(initialSearchUrl);
     await requestQueue.addRequest({
         url: initialSearchUrl,
@@ -262,17 +402,19 @@ const crawler = new CheerioCrawler({
 
         if (request.userData.label === 'SEARCH') {
             const pageNumber = request.userData.page || 1;
-            const listingPageUrls = extractListingUrlsFromSearch($);
-            crawlerLog.info(`Search page ${pageNumber}: found ${listingPageUrls.length} listing URLs.`);
+            const overviews = extractOverviewItems($, pageNumber);
+            crawlerLog.info(`Search page ${pageNumber}: found ${overviews.length} listing cards.`);
 
             let addedFromPage = 0;
-            for (const listingUrl of listingPageUrls) {
+            for (const rawOverview of overviews) {
                 if (outputCount >= maxResults) break;
+                const overview = enrichOverviewFromEmbeddedState($, rawOverview);
+                const listingUrl = overview.url;
                 if (seenListingUrls.has(listingUrl)) continue;
                 seenListingUrls.add(listingUrl);
 
-                const overview = extractOverviewForUrl($, listingUrl, pageNumber);
                 if (scrapeMode === 'overview') {
+                    if (!matchesFilters(overview, filters)) continue;
                     await Actor.pushData(overview);
                     outputCount += 1;
                 } else {
@@ -305,6 +447,10 @@ const crawler = new CheerioCrawler({
 
         if (request.userData.label === 'DETAIL') {
             const detail = extractDetail($, request, request.userData.overview || {});
+            if (!matchesFilters(detail, filters)) {
+                crawlerLog.info(`Filtered out: ${detail.id || detail.url}`);
+                return;
+            }
             await Actor.pushData(detail);
             outputCount += 1;
             crawlerLog.info(`Saved detail ${outputCount}/${maxResults}: ${detail.id || detail.url}`);
