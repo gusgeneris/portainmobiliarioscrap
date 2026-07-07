@@ -71,7 +71,16 @@ const parsePositiveIntWithDefault = (value, defaultValue) => {
     return parsed;
 };
 
+const normalizeInputCurrency = (value) => {
+    const raw = cleanText(value).toUpperCase();
+    if (!raw || raw === 'ANY') return 'any';
+    if (raw === 'UF' || raw === 'CLF') return 'UF';
+    if (raw === 'CLP' || raw === '$' || raw === 'PESOS' || raw === 'PESO') return 'CLP';
+    return 'any';
+};
+
 const buildFilters = (input) => ({
+    priceCurrency: normalizeInputCurrency(input.priceCurrency),
     minPrice: parseNumber(input.minPrice),
     maxPrice: parseNumber(input.maxPrice),
     minBedrooms: parseIntOrNull(input.minBedrooms),
@@ -89,11 +98,20 @@ const withinRange = (value, min, max) => {
     return true;
 };
 
-const matchesFilters = (item, filters) =>
-    withinRange(item.price, filters.minPrice, filters.maxPrice) &&
-    withinRange(item.bedrooms, filters.minBedrooms, filters.maxBedrooms) &&
-    withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
-    withinRange(item.parking, filters.minParking, null);
+const matchesFilters = (item, filters) => {
+    const currencyMatches =
+        filters.priceCurrency === 'any' ||
+        (item.currency && item.currency.toUpperCase() === filters.priceCurrency);
+
+    if (!currencyMatches) return false;
+
+    return (
+        withinRange(item.price, filters.minPrice, filters.maxPrice) &&
+        withinRange(item.bedrooms, filters.minBedrooms, filters.maxBedrooms) &&
+        withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
+        withinRange(item.parking, filters.minParking, null)
+    );
+};
 
 const currencyFromPortalCode = (value) => {
     if (value === 'CLF') return 'UF';

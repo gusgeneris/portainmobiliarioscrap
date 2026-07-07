@@ -87,6 +87,18 @@
       ],
       "editor": "select"
     },
+    "priceCurrency": {
+      "title": "Moneda del precio",
+      "type": "string",
+      "description": "Moneda para aplicar filtros de minPrice/maxPrice.",
+      "default": "any",
+      "enum": [
+        "any",
+        "UF",
+        "CLP"
+      ],
+      "editor": "select"
+    },
     "minPrice": {
       "title": "Precio mínimo",
       "type": "string",
