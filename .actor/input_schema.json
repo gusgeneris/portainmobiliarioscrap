@@ -141,6 +141,12 @@
       "description": "Cantidad mínima de estacionamientos (acepta string o número).",
       "editor": "textfield"
     },
+    "maxParking": {
+      "title": "Estacionamientos máximo",
+      "type": "string",
+      "description": "Cantidad máxima de estacionamientos (acepta string o número).",
+      "editor": "textfield"
+    },
     "searchUrl": {
       "title": "Search URL",
       "type": "string",
@@ -149,12 +155,9 @@
     },
     "listingUrls": {
       "title": "Listing URLs",
-      "type": "array",
-      "description": "Used when searchMode=byListingUrl.",
-      "editor": "stringList",
-      "items": {
-        "type": "string"
-      }
+      "type": "string",
+      "description": "Used when searchMode=byListingUrl. Accepts a JSON array string, comma-separated URLs, or newline-separated URLs.",
+      "editor": "textarea"
     },
     "maxResults": {
       "title": "Max results",

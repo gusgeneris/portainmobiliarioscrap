@@ -71,6 +71,41 @@ const parsePositiveIntWithDefault = (value, defaultValue) => {
     return parsed;
 };
 
+const normalizeNullableString = (value) => {
+    if (value == null) return null;
+    const normalized = cleanText(String(value));
+    if (!normalized) return null;
+    if (['null', 'undefined', 'none', 'n/a', 'na'].includes(normalized.toLowerCase())) return null;
+    return normalized;
+};
+
+const normalizeChoice = (value, allowedValues, fallback) => {
+    const normalized = normalizeNullableString(value);
+    if (!normalized) return fallback;
+    if (allowedValues.includes(normalized)) return normalized;
+    return fallback;
+};
+
+const parseListingUrlsInput = (value) => {
+    if (Array.isArray(value)) return value.map((entry) => normalizeNullableString(entry)).filter(Boolean);
+    const normalized = normalizeNullableString(value);
+    if (!normalized) return [];
+
+    try {
+        const parsed = JSON.parse(normalized);
+        if (Array.isArray(parsed)) {
+            return parsed.map((entry) => normalizeNullableString(entry)).filter(Boolean);
+        }
+    } catch {
+        // Continue with text parsing.
+    }
+
+    return normalized
+        .split(/[\n,;]+/)
+        .map((entry) => normalizeNullableString(entry))
+        .filter(Boolean);
+};
+
 const normalizeInputCurrency = (value) => {
     const raw = cleanText(value).toUpperCase();
     if (!raw || raw === 'ANY') return 'any';
@@ -88,6 +123,7 @@ const buildFilters = (input) => ({
     minBathrooms: parseIntOrNull(input.minBathrooms),
     maxBathrooms: parseIntOrNull(input.maxBathrooms),
     minParking: parseIntOrNull(input.minParking),
+    maxParking: parseIntOrNull(input.maxParking),
 });
 
 const withinRange = (value, min, max) => {
@@ -109,7 +145,7 @@ const matchesFilters = (item, filters) => {
         withinRange(item.price, filters.minPrice, filters.maxPrice) &&
         withinRange(item.bedrooms, filters.minBedrooms, filters.maxBedrooms) &&
         withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
-        withinRange(item.parking, filters.minParking, null)
+        withinRange(item.parking, filters.minParking, filters.maxParking)
     );
 };
 
@@ -362,25 +398,39 @@ await Actor.init();
 
 const input = (await Actor.getInput()) || {};
 const {
-    scrapeMode = 'overview',
-    searchMode = 'byPlace',
-    operation = 'venta',
-    propertyType = 'departamento',
-    location = 'santiago-metropolitana',
-    condition = 'any',
-    modality = 'any',
+    scrapeMode: rawScrapeMode = 'overview',
+    searchMode: rawSearchMode = 'byPlace',
+    operation: rawOperation = 'venta',
+    propertyType: rawPropertyType = 'departamento',
+    location: rawLocation = 'santiago-metropolitana',
+    condition: rawCondition = 'any',
+    modality: rawModality = 'any',
     searchUrl,
-    listingUrls = [],
+    listingUrls: rawListingUrls = [],
     maxResults,
     maxPages,
     proxyConfiguration,
 } = input;
 
+const scrapeMode = normalizeChoice(rawScrapeMode, ['overview', 'detail'], 'overview');
+const searchMode = normalizeChoice(rawSearchMode, ['byPlace', 'bySearchUrl', 'byListingUrl'], 'byPlace');
+const operation = normalizeChoice(rawOperation, ['venta', 'arriendo', 'arriendo-temporal'], 'venta');
+const propertyType = normalizeChoice(
+    rawPropertyType,
+    ['departamento', 'casa', 'oficina', 'terreno', 'parcela', 'local', 'bodega'],
+    'departamento',
+);
+const location = normalizeNullableString(rawLocation) || 'santiago-metropolitana';
+const condition = normalizeChoice(rawCondition, ['any', 'propiedades-usadas', 'propiedades-nuevas'], 'any');
+const modality = normalizeChoice(rawModality, ['any', 'propiedades-usadas', 'propiedades-nuevas', 'proyectos'], 'any');
+const listingUrls = parseListingUrlsInput(rawListingUrls);
+const normalizedSearchUrl = normalizeNullableString(searchUrl);
+
 const maxResultsLimit = parsePositiveIntWithDefault(maxResults, 5);
 const maxPagesLimit = parsePositiveIntWithDefault(maxPages, 5);
 const filters = buildFilters(input);
 
-if (searchMode === 'bySearchUrl' && !searchUrl) {
+if (searchMode === 'bySearchUrl' && !normalizedSearchUrl) {
     throw new Error('searchUrl is required when searchMode is "bySearchUrl".');
 }
 
@@ -419,7 +469,7 @@ if (searchMode === 'byListingUrl') {
         location,
         condition,
         modality,
-        searchUrl,
+        searchUrl: normalizedSearchUrl,
     });
     seenSearchUrls.add(initialSearchUrl);
     await requestQueue.addRequest({
