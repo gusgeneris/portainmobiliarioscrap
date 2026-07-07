@@ -101,62 +101,138 @@
     },
     "minPrice": {
       "title": "Precio mínimo",
-      "type": "string",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Filtro por precio mínimo en la moneda del aviso (acepta string o número).",
       "editor": "textfield"
     },
     "maxPrice": {
       "title": "Precio máximo",
-      "type": "string",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
       "description": "Filtro por precio máximo en la moneda del aviso (acepta string o número).",
       "editor": "textfield"
     },
     "minBedrooms": {
       "title": "Dormitorios mínimo",
-      "type": "string",
-      "description": "Cantidad mínima de dormitorios (acepta string o número).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cantidad mínima de dormitorios (acepta string, número o null).",
       "editor": "textfield"
     },
     "maxBedrooms": {
       "title": "Dormitorios máximo",
-      "type": "string",
-      "description": "Cantidad máxima de dormitorios (acepta string o número).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cantidad máxima de dormitorios (acepta string, número o null).",
       "editor": "textfield"
     },
     "minBathrooms": {
       "title": "Baños mínimo",
-      "type": "string",
-      "description": "Cantidad mínima de baños (acepta string o número).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cantidad mínima de baños (acepta string, número o null).",
       "editor": "textfield"
     },
     "maxBathrooms": {
       "title": "Baños máximo",
-      "type": "string",
-      "description": "Cantidad máxima de baños (acepta string o número).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cantidad máxima de baños (acepta string, número o null).",
       "editor": "textfield"
     },
     "minParking": {
       "title": "Estacionamientos mínimo",
-      "type": "string",
-      "description": "Cantidad mínima de estacionamientos (acepta string o número).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cantidad mínima de estacionamientos (acepta string, número o null).",
       "editor": "textfield"
     },
     "maxParking": {
       "title": "Estacionamientos máximo",
-      "type": "string",
-      "description": "Cantidad máxima de estacionamientos (acepta string o número).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Cantidad máxima de estacionamientos (acepta string, número o null).",
       "editor": "textfield"
     },
     "searchUrl": {
       "title": "Search URL",
-      "type": "string",
-      "description": "Used when searchMode=bySearchUrl.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Used when searchMode=bySearchUrl. Accepts string or null.",
       "editor": "textfield"
     },
     "listingUrls": {
       "title": "Listing URLs",
-      "type": "string",
-      "description": "Used when searchMode=byListingUrl. Accepts a JSON array string, comma-separated URLs, or newline-separated URLs.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Used when searchMode=byListingUrl. Accepts string, array, or null.",
       "editor": "textarea"
     },
     "maxResults": {
