@@ -51,6 +51,44 @@ const parsePrice = (priceText) => {
     return { rawPrice: raw, price, currency };
 };
 
+const normalizePhone = (value) => {
+    const cleaned = cleanText(value);
+    if (!cleaned) return null;
+    const digits = cleaned.replace(/[^\d+]/g, '');
+    if (!digits) return null;
+    if (digits.startsWith('+')) return digits;
+    if (digits.startsWith('56')) return `+${digits}`;
+    if (digits.length === 9) return `+56${digits}`;
+    return digits;
+};
+
+const extractPhones = ($) => {
+    const phones = new Set();
+
+    $('a[href^="tel:"]').each((_, el) => {
+        const href = $(el).attr('href') || '';
+        const fromHref = normalizePhone(href.replace(/^tel:/i, ''));
+        if (fromHref) phones.add(fromHref);
+        const fromText = normalizePhone($(el).text());
+        if (fromText) phones.add(fromText);
+    });
+
+    $('a[href*="wa.me/"], a[href*="whatsapp"]').each((_, el) => {
+        const href = $(el).attr('href') || '';
+        const waMatch = href.match(/wa\.me\/(\d{8,15})/i);
+        if (waMatch?.[1]) phones.add(normalizePhone(waMatch[1]));
+    });
+
+    const bodyText = cleanText($('body').text());
+    const regexMatches = bodyText.match(/(\+?56\s?9\s?\d{4}\s?\d{4})/g) || [];
+    for (const match of regexMatches) {
+        const normalized = normalizePhone(match);
+        if (normalized) phones.add(normalized);
+    }
+
+    return [...phones].filter(Boolean);
+};
+
 const decodeJsonEscapedText = (value) => {
     if (!value) return null;
     return value
@@ -261,6 +299,8 @@ const extractOverviewItems = ($, pageNumber) => {
             thumbnail,
             ...parsePrice(priceText),
             ...summary,
+            contactPhone: null,
+            contactPhones: [],
         });
     });
 
@@ -281,6 +321,8 @@ const extractOverviewItems = ($, pageNumber) => {
         bedrooms: null,
         bathrooms: null,
         parking: null,
+        contactPhone: null,
+        contactPhones: [],
     }));
 };
 
@@ -380,6 +422,7 @@ const extractDetail = ($, request, overview) => {
 
     const priceInfo = parsePrice(priceText);
     const summary = parseSummaryByRegex(fullText);
+    const phones = extractPhones($);
 
     return {
         ...overview,
@@ -399,6 +442,8 @@ const extractDetail = ($, request, overview) => {
         thumbnail: overview.thumbnail || imageList[0] || null,
         ...priceInfo,
         ...summary,
+        contactPhone: phones[0] || null,
+        contactPhones: phones,
     };
 };
 
@@ -406,7 +451,7 @@ await Actor.init();
 
 const input = (await Actor.getInput()) || {};
 const {
-    scrapeMode: rawScrapeMode = 'overview',
+    scrapeMode: rawScrapeMode,
     includeDetails,
     searchMode: rawSearchMode = 'byPlace',
     operation: rawOperation = 'venta',
@@ -421,7 +466,7 @@ const {
     proxyConfiguration,
 } = input;
 
-const inferredScrapeMode = includeDetails === true ? 'detail' : includeDetails === false ? 'overview' : 'overview';
+const inferredScrapeMode = includeDetails === true ? 'detail' : 'overview';
 const scrapeMode = normalizeChoice(rawScrapeMode, ['overview', 'detail'], inferredScrapeMode);
 const searchMode = normalizeChoice(rawSearchMode, ['byPlace', 'bySearchUrl', 'byListingUrl'], 'byPlace');
 const operation = normalizeChoice(rawOperation, ['venta', 'arriendo', 'arriendo-temporal'], 'venta');
