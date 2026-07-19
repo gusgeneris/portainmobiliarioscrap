@@ -89,6 +89,24 @@ const extractPhones = ($) => {
     return [...phones].filter(Boolean);
 };
 
+const detectContactAvailability = ($, phones) => {
+    const hasPhone = Array.isArray(phones) && phones.length > 0;
+    if (hasPhone) return 'phone_visible';
+
+    const hasWhatsappLink = $('a[href*="wa.me/"], a[href*="whatsapp"]').length > 0;
+    if (hasWhatsappLink) return 'whatsapp_visible';
+
+    const bodyText = cleanText($('body').text()).toLowerCase();
+    const hasContactFormHints =
+        bodyText.includes('contactar') ||
+        bodyText.includes('contáct') ||
+        bodyText.includes('enviar mensaje') ||
+        bodyText.includes('consulta');
+
+    if (hasContactFormHints) return 'form_only';
+    return 'not_visible';
+};
+
 const decodeJsonEscapedText = (value) => {
     if (!value) return null;
     return value
@@ -301,6 +319,7 @@ const extractOverviewItems = ($, pageNumber) => {
             ...summary,
             contactPhone: null,
             contactPhones: [],
+            contactAvailability: 'unknown',
         });
     });
 
@@ -323,6 +342,7 @@ const extractOverviewItems = ($, pageNumber) => {
         parking: null,
         contactPhone: null,
         contactPhones: [],
+        contactAvailability: 'unknown',
     }));
 };
 
@@ -423,6 +443,7 @@ const extractDetail = ($, request, overview) => {
     const priceInfo = parsePrice(priceText);
     const summary = parseSummaryByRegex(fullText);
     const phones = extractPhones($);
+    const contactAvailability = detectContactAvailability($, phones);
 
     return {
         ...overview,
@@ -444,6 +465,7 @@ const extractDetail = ($, request, overview) => {
         ...summary,
         contactPhone: phones[0] || null,
         contactPhones: phones,
+        contactAvailability,
     };
 };
 
