@@ -87,6 +87,18 @@
       ],
       "editor": "select"
     },
+    "currencyUnit": {
+      "title": "Currency unit (alias)",
+      "type": "string",
+      "description": "Alias compatible con entrepropiedades-actor. uf/pesos/any.",
+      "default": "any",
+      "enum": [
+        "any",
+        "uf",
+        "pesos"
+      ],
+      "editor": "select"
+    },
     "priceCurrency": {
       "title": "Moneda del precio",
       "type": "string",
@@ -172,6 +184,20 @@
       "description": "Only used for byPlace and bySearchUrl (acepta string o número).",
       "default": "5",
       "editor": "textfield"
+    },
+    "withParking": {
+      "title": "With parking (alias)",
+      "type": "boolean",
+      "description": "Alias compatible con entrepropiedades-actor. Si true, exige estacionamiento.",
+      "default": false,
+      "editor": "checkbox"
+    },
+    "includeDetails": {
+      "title": "Include details (alias)",
+      "type": "boolean",
+      "description": "Alias compatible con entrepropiedades-actor. true=detail, false=overview cuando scrapeMode no venga.",
+      "default": true,
+      "editor": "checkbox"
     },
     "proxyConfiguration": {
       "title": "Proxy configuration",

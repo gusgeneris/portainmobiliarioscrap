@@ -114,8 +114,14 @@ const normalizeInputCurrency = (value) => {
     return 'any';
 };
 
+const normalizeCurrencyFromAliases = (priceCurrency, currencyUnit) => {
+    const byPriceCurrency = normalizeInputCurrency(priceCurrency);
+    if (byPriceCurrency !== 'any') return byPriceCurrency;
+    return normalizeInputCurrency(currencyUnit);
+};
+
 const buildFilters = (input) => ({
-    priceCurrency: normalizeInputCurrency(input.priceCurrency),
+    priceCurrency: normalizeCurrencyFromAliases(input.priceCurrency, input.currencyUnit),
     minPrice: parseNumber(input.minPrice),
     maxPrice: parseNumber(input.maxPrice),
     minBedrooms: parseIntOrNull(input.minBedrooms),
@@ -124,6 +130,7 @@ const buildFilters = (input) => ({
     maxBathrooms: parseIntOrNull(input.maxBathrooms),
     minParking: parseIntOrNull(input.minParking),
     maxParking: parseIntOrNull(input.maxParking),
+    withParking: Boolean(input.withParking),
 });
 
 const withinRange = (value, min, max) => {
@@ -145,7 +152,8 @@ const matchesFilters = (item, filters) => {
         withinRange(item.price, filters.minPrice, filters.maxPrice) &&
         withinRange(item.bedrooms, filters.minBedrooms, filters.maxBedrooms) &&
         withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
-        withinRange(item.parking, filters.minParking, filters.maxParking)
+        withinRange(item.parking, filters.minParking, filters.maxParking) &&
+        (!filters.withParking || (item.parking != null && item.parking > 0))
     );
 };
 
@@ -399,6 +407,7 @@ await Actor.init();
 const input = (await Actor.getInput()) || {};
 const {
     scrapeMode: rawScrapeMode = 'overview',
+    includeDetails,
     searchMode: rawSearchMode = 'byPlace',
     operation: rawOperation = 'venta',
     propertyType: rawPropertyType = 'departamento',
@@ -412,7 +421,8 @@ const {
     proxyConfiguration,
 } = input;
 
-const scrapeMode = normalizeChoice(rawScrapeMode, ['overview', 'detail'], 'overview');
+const inferredScrapeMode = includeDetails === true ? 'detail' : includeDetails === false ? 'overview' : 'overview';
+const scrapeMode = normalizeChoice(rawScrapeMode, ['overview', 'detail'], inferredScrapeMode);
 const searchMode = normalizeChoice(rawSearchMode, ['byPlace', 'bySearchUrl', 'byListingUrl'], 'byPlace');
 const operation = normalizeChoice(rawOperation, ['venta', 'arriendo', 'arriendo-temporal'], 'venta');
 const propertyType = normalizeChoice(
