@@ -751,6 +751,23 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         requestQueue,
         proxyConfiguration: proxy,
         maxRequestRetries: 1,
+        minConcurrency: 1,
+        maxConcurrency: 1,
+        navigationTimeoutSecs: 30,
+        requestHandlerTimeoutSecs: 45,
+        preNavigationHooks: [
+            async ({ page }, gotoOptions) => {
+                gotoOptions.waitUntil = 'domcontentloaded';
+                gotoOptions.timeout = 30000;
+                await page.route('**/*', (route) => {
+                    const resourceType = route.request().resourceType();
+                    if (resourceType === 'image' || resourceType === 'media' || resourceType === 'font') {
+                        return route.abort();
+                    }
+                    return route.continue();
+                });
+            },
+        ],
         async requestHandler({ request, page, parseWithCheerio, log: crawlerLog }) {
             if (outputCount >= maxResultsLimit) return;
             const $ = await parseWithCheerio();
