@@ -218,6 +218,13 @@
       "default": true,
       "editor": "checkbox"
     },
+    "resolveContactViaBrowser": {
+      "title": "Resolve WhatsApp via browser",
+      "type": "boolean",
+      "description": "Only for scrapeMode=detail + searchMode=byListingUrl. Uses browser click flow to capture /contact-info/whatsapp response.",
+      "default": false,
+      "editor": "checkbox"
+    },
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "type": "object",

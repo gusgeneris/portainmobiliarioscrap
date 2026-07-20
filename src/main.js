@@ -1,5 +1,5 @@
 import { Actor } from 'apify';
-import { CheerioCrawler, log } from 'crawlee';
+import { CheerioCrawler, PlaywrightCrawler, log } from 'crawlee';
 
 const BASE_URL = 'https://www.portalinmobiliario.com';
 const RESULTS_PER_PAGE = 48;
@@ -141,6 +141,48 @@ const extractPhoneFromWhatsAppLink = (link) => {
     if (waMatch?.[1]) return normalizePhone(waMatch[1]);
     const phoneParamMatch = normalized.match(/[?&]phone=(\d{8,15})/i);
     if (phoneParamMatch?.[1]) return normalizePhone(phoneParamMatch[1]);
+    return null;
+};
+
+const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
+    if (!itemId) return null;
+    const compactItemId = itemId.replace('-', '');
+    const endpointFragment = `/p/api/items/${compactItemId}/contact-info/whatsapp`;
+    const selectors = [
+        'button:has-text("WhatsApp")',
+        'a:has-text("WhatsApp")',
+        '[data-testid*="whatsapp"]',
+        '[aria-label*="WhatsApp" i]',
+        '[class*="whatsapp"]',
+    ];
+
+    for (const selector of selectors) {
+        const responsePromise = page
+            .waitForResponse(
+                (response) =>
+                    response.url().includes(endpointFragment) &&
+                    response.request().method() === 'GET',
+                { timeout: 12000 },
+            )
+            .catch(() => null);
+
+        const locator = page.locator(selector).first();
+        const isVisible = await locator.isVisible().catch(() => false);
+        if (!isVisible) continue;
+
+        await locator.click({ timeout: 4000, force: true }).catch(() => null);
+        const response = await responsePromise;
+        if (!response?.ok()) continue;
+
+        const payload = await response.json().catch(() => null);
+        const target = normalizeContactLink(payload?.whatsapp?.target);
+        if (!target) continue;
+        return {
+            target,
+            phone: extractPhoneFromWhatsAppLink(target),
+        };
+    }
+
     return null;
 };
 
@@ -601,8 +643,9 @@ const extractDetail = ($, request, overview) => {
         .map((link) => extractPhoneFromWhatsAppLink(link))
         .filter(Boolean);
     const allPhones = [...new Set([...(phones || []), ...phonesFromLinks])];
-    const cleanedContactLinks = (contactLinks || []).filter((link) => !isDirectWhatsAppLink(link));
-    const contactAvailability = detectContactAvailability($, allPhones, cleanedContactLinks);
+    // Keep only direct WhatsApp links with explicit phone numbers.
+    const directContactLinks = [...new Set((contactLinks || []).filter((link) => isDirectWhatsAppLink(link)))];
+    const contactAvailability = detectContactAvailability($, allPhones, directContactLinks);
 
     return {
         ...overview,
@@ -624,8 +667,8 @@ const extractDetail = ($, request, overview) => {
         ...summary,
         contactPhone: allPhones[0] || null,
         contactPhones: allPhones,
-        contactLink: cleanedContactLinks[0] || null,
-        contactLinks: cleanedContactLinks,
+        contactLink: directContactLinks[0] || null,
+        contactLinks: directContactLinks,
         contactAvailability,
     };
 };
@@ -648,6 +691,7 @@ const {
     maxResults,
     maxPages,
     proxyConfiguration,
+    resolveContactViaBrowser,
 } = input;
 
 const includeDetailsEnabled = parseBoolean(includeDetails, true);
@@ -670,6 +714,7 @@ const normalizedSearchUrl = normalizeNullableString(searchUrl);
 const maxResultsLimit = parsePositiveIntWithDefault(maxResults, 5);
 const maxPagesLimit = parsePositiveIntWithDefault(maxPages, 5);
 const filters = buildFilters(input);
+const shouldResolveContactViaBrowser = parseBoolean(resolveContactViaBrowser, false);
 
 if (searchMode === 'bySearchUrl' && !normalizedSearchUrl) {
     throw new Error('searchUrl is required when searchMode is "bySearchUrl".');
@@ -677,6 +722,74 @@ if (searchMode === 'bySearchUrl' && !normalizedSearchUrl) {
 
 if (searchMode === 'byListingUrl' && (!Array.isArray(listingUrls) || listingUrls.length === 0)) {
     throw new Error('listingUrls must contain at least one URL when searchMode is "byListingUrl".');
+}
+
+if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveContactViaBrowser) {
+    const proxy = await Actor.createProxyConfiguration(proxyConfiguration);
+    const requestQueue = await Actor.openRequestQueue();
+    const seenListingUrls = new Set();
+    let outputCount = 0;
+
+    for (const rawUrl of listingUrls) {
+        const normalized = normalizeListingUrl(rawUrl);
+        if (!normalized || seenListingUrls.has(normalized)) continue;
+        seenListingUrls.add(normalized);
+        await requestQueue.addRequest({
+            url: normalized,
+            userData: {
+                label: 'DETAIL',
+                overview: {
+                    source: 'overview',
+                    id: extractListingId(normalized),
+                    url: normalized,
+                },
+            },
+        });
+    }
+
+    const browserCrawler = new PlaywrightCrawler({
+        requestQueue,
+        proxyConfiguration: proxy,
+        maxRequestRetries: 1,
+        async requestHandler({ request, page, parseWithCheerio, log: crawlerLog }) {
+            if (outputCount >= maxResultsLimit) return;
+            const $ = await parseWithCheerio();
+            const detail = extractDetail($, request, request.userData.overview || {});
+            const realContact = await extractRealWhatsAppFromApiResponse({
+                page,
+                itemId: detail.id || extractListingId(request.loadedUrl || request.url),
+            });
+
+            if (realContact?.phone) {
+                const mergedPhones = [...new Set([realContact.phone, ...(detail.contactPhones || [])])];
+                detail.contactPhone = mergedPhones[0] || null;
+                detail.contactPhones = mergedPhones;
+            }
+
+            if (realContact?.target) {
+                detail.contactLink = realContact.target;
+                detail.contactLinks = [realContact.target];
+            }
+
+            detail.contactAvailability = detectContactAvailability($, detail.contactPhones, detail.contactLinks);
+
+            if (!matchesFilters(detail, filters)) {
+                crawlerLog.info(`Filtered out: ${detail.id || detail.url}`);
+                return;
+            }
+
+            await Actor.pushData(detail);
+            outputCount += 1;
+            crawlerLog.info(`Saved detail ${outputCount}/${maxResultsLimit}: ${detail.id || detail.url}`);
+        },
+        failedRequestHandler({ request }) {
+            log.error(`Request failed after retries: ${request.url}`);
+        },
+    });
+
+    await browserCrawler.run();
+    await Actor.exit();
+    process.exit(0);
 }
 
 const proxy = await Actor.createProxyConfiguration(proxyConfiguration);
