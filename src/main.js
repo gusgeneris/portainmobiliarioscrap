@@ -1010,10 +1010,36 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         // Contact extraction now retries the click up to 3x (with a load-state grace wait) to
         // survive hydration lag, so give the handler more headroom than the older single-shot flow.
         requestHandlerTimeoutSecs: 30,
+        launchContext: {
+            launchOptions: {
+                // Removes the most well-known CDP-visible automation signal Chrome exposes by default.
+                args: ['--disable-blink-features=AutomationControlled'],
+            },
+        },
+        browserPoolOptions: {
+            preLaunchHooks: [
+                (_pageId, launchContext) => {
+                    launchContext.launchOptions = {
+                        ...launchContext.launchOptions,
+                        locale: 'es-CL',
+                        timezoneId: 'America/Santiago',
+                    };
+                },
+            ],
+        },
         preNavigationHooks: [
             async ({ page }, gotoOptions) => {
                 gotoOptions.waitUntil = 'domcontentloaded';
                 gotoOptions.timeout = 20000;
+                // Best-effort mitigation of the most common headless/automation fingerprint checks.
+                // This is unlikely to fully defeat reCAPTCHA Enterprise's risk scoring on its own,
+                // but removes the "free" tells that make automated sessions trivially detectable.
+                await page.addInitScript(() => {
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
+                    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                    window.chrome = window.chrome || { runtime: {} };
+                }).catch(() => null);
                 await page.route('**/*', (route) => {
                     const resourceType = route.request().resourceType();
                     if (resourceType === 'image' || resourceType === 'media' || resourceType === 'font') {
