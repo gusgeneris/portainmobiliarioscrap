@@ -277,7 +277,7 @@ const clickWhatsAppButtonAndWaitForApiResponse = async ({ page, locator, endpoin
     return { response: null, attempts: maxAttempts };
 };
 
-const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
+const extractRealWhatsAppFromApiResponse = async ({ page, itemId, maxClickAttempts = 3 }) => {
     if (!itemId) {
         return emptyContactResult({ failureReason: CONTACT_FAILURE_REASONS.MISSING_ITEM_ID });
     }
@@ -320,6 +320,7 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         page,
         locator: selectedLocator,
         endpointFragment,
+        maxAttempts: maxClickAttempts,
     });
 
     if (!response) {
@@ -1159,7 +1160,15 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
             const itemId = overview.id || extractListingId(request.loadedUrl || request.url);
 
             await dismissCookieBanner(page);
-            const realContact = await extractRealWhatsAppFromApiResponse({ page, itemId });
+            // When contact data isn't required, don't spend the full 3-attempt retry budget
+            // chasing a click that's likely to fail anyway (recaptcha/daily limit) — a single
+            // best-effort attempt still catches the happy path without the extra ~5-6s of
+            // retries/pauses on every listing that won't be discarded regardless.
+            const realContact = await extractRealWhatsAppFromApiResponse({
+                page,
+                itemId,
+                maxClickAttempts: filters.requireContactData ? 3 : 1,
+            });
             const hasDirectContact = Boolean(realContact?.phone || realContact?.target);
 
             // The site returns HTTP 200 with success:false + a "daily contact limit" message once the
@@ -1219,6 +1228,15 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
             await Actor.pushData(detail);
             outputCount += 1;
             crawlerLog.info(`Saved detail ${outputCount}/${maxResultsLimit}: ${detail.id || detail.url}`);
+
+            // All listingUrls are enqueued upfront, so without this the crawler keeps navigating
+            // to (and paying the full page-load cost for) every remaining URL even after we
+            // already have enough results — the early `outputCount >= maxResultsLimit` check up
+            // top only skips the *processing*, not the navigation that already happened.
+            if (outputCount >= maxResultsLimit) {
+                crawlerLog.info(`Reached maxResults (${maxResultsLimit}); stopping browser crawler early.`);
+                await browserCrawler.stop('Reached maxResults.');
+            }
         },
         failedRequestHandler({ request }) {
             log.error(`Request failed after retries: ${request.url}`);
