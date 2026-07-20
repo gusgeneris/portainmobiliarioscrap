@@ -170,11 +170,30 @@ const hasRecaptchaChallenge = async (page) => {
     return count > 0;
 };
 
+const DAILY_LIMIT_MESSAGE_HINTS = ['límite de contactos diarios', 'limite de contactos diarios', 'vuelve a intentarlo mañana'];
+
+const isDailyLimitMessage = (message) => {
+    if (!message) return false;
+    const normalized = message.toLowerCase();
+    return DAILY_LIMIT_MESSAGE_HINTS.some((hint) => normalized.includes(hint));
+};
+
+const emptyContactResult = (extra = {}) => ({
+    target: null,
+    phone: null,
+    recaptchaChallenge: false,
+    dailyLimitReached: false,
+    displayMessage: null,
+    ...extra,
+});
+
 const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
-    if (!itemId) return { target: null, phone: null, recaptchaChallenge: false };
+    if (!itemId) return emptyContactResult();
     const compactItemId = itemId.replace('-', '');
     const endpointFragment = `/p/api/items/${compactItemId}/contact-info/whatsapp`;
+    // Prefer the exact button class from the real DOM over generic text/attribute matches.
     const selectors = [
+        '.ui-vip-action-contact-info',
         'button:has-text("WhatsApp")',
         'a:has-text("WhatsApp")',
         '[data-testid*="whatsapp"]',
@@ -192,7 +211,7 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         }
     }
 
-    if (!selectedLocator) return { target: null, phone: null, recaptchaChallenge: false };
+    if (!selectedLocator) return emptyContactResult();
 
     const responsePromise = page
         .waitForResponse(
@@ -207,19 +226,31 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
     await selectedLocator.click({ timeout: 2000, force: true }).catch(() => null);
     const response = await responsePromise;
 
-    if (!response?.ok()) {
+    if (!response) {
         const recaptchaChallenge = await hasRecaptchaChallenge(page);
-        return { target: null, phone: null, recaptchaChallenge };
+        return emptyContactResult({ recaptchaChallenge });
     }
 
+    // The endpoint returns HTTP 200 even for business-rule failures (e.g. daily quota),
+    // so the JSON payload's `success`/`display_message` fields are the real signal.
     const payload = await response.json().catch(() => null);
+    const displayMessage = typeof payload?.display_message === 'string' ? payload.display_message : null;
+    const dailyLimitReached = payload?.success === false && isDailyLimitMessage(displayMessage);
+
+    if (!response.ok() || payload?.success === false) {
+        const recaptchaChallenge = dailyLimitReached ? false : await hasRecaptchaChallenge(page);
+        return emptyContactResult({ recaptchaChallenge, dailyLimitReached, displayMessage });
+    }
+
     const target = normalizeContactLink(payload?.whatsapp?.target);
-    if (!target) return { target: null, phone: null, recaptchaChallenge: false };
+    if (!target) return emptyContactResult({ displayMessage });
 
     return {
         target,
         phone: extractPhoneFromWhatsAppLink(target),
         recaptchaChallenge: false,
+        dailyLimitReached: false,
+        displayMessage,
     };
 };
 
@@ -847,6 +878,18 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
             await dismissCookieBanner(page);
             const realContact = await extractRealWhatsAppFromApiResponse({ page, itemId });
             const hasDirectContact = Boolean(realContact?.phone || realContact?.target);
+
+            // The site returns HTTP 200 with success:false + a "daily contact limit" message once the
+            // account/session/IP quota for revealing contact info is exhausted. Once seen, every further
+            // attempt will fail the same way until the quota resets, so stop the whole run immediately.
+            if (realContact?.dailyLimitReached) {
+                crawlerLog.warning(
+                    `Daily WhatsApp contact-reveal limit reached (server message: "${realContact.displayMessage}"). ` +
+                        `Stopping browser crawler early: ${itemId || request.url}`,
+                );
+                await browserCrawler.stop('Daily contact-reveal limit reached on portalinmobiliario.com.');
+                return;
+            }
 
             // Fail-fast: skip full detail parsing when contact is required but unavailable,
             // this is the dominant cost driver when most listings don't yield a direct contact.
