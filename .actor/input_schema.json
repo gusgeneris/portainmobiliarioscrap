@@ -90,7 +90,7 @@
     "publishedSince": {
       "title": "Publicado desde",
       "type": "string",
-      "description": "Filtro temporal nativo del buscador. Por defecto: última semana.",
+      "description": "any = sin filtro. today = usa el filtro nativo del sitio (_PublishedToday_YES). last_week = se aplica como post-filtro leyendo el badge real de la página de detalle ('Publicado hoy/esta semana/hace X'); el sitio no tiene un facet de 'última semana', así que en scrapeMode=overview no se puede verificar y se deja pasar. Por defecto: última semana.",
       "default": "last_week",
       "enum": [
         "any",
@@ -214,8 +214,8 @@
     "requireContactData": {
       "title": "Require contact data",
       "type": "boolean",
-      "description": "If true, only returns properties with visible phone or contact link.",
-      "default": true,
+      "description": "If true, only returns properties with a visible phone or contact link. Off by default: WhatsApp reveal is often blocked by recaptcha/daily limits, so requiring it can return zero results.",
+      "default": false,
       "editor": "checkbox"
     },
     "resolveContactViaBrowser": {

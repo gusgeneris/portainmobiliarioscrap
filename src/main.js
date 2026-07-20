@@ -590,7 +590,10 @@ const buildFilters = (input) => ({
     minParking: parseIntOrNull(input.minParking),
     maxParking: parseIntOrNull(input.maxParking),
     withParking: parseBoolean(input.withParking, false),
-    requireContactData: parseBoolean(input.requireContactData, true),
+    // Contact data is scarce (recaptcha/daily-limit blocked) and shouldn't hard-block results by
+    // default; leave it opt-in so runs don't silently return empty.
+    requireContactData: parseBoolean(input.requireContactData, false),
+    publishedSince: normalizeChoice(input.publishedSince, ['any', 'today', 'last_week'], 'last_week'),
 });
 
 const withinRange = (value, min, max) => {
@@ -599,6 +602,18 @@ const withinRange = (value, min, max) => {
     if (min != null && value < min) return false;
     if (max != null && value > max) return false;
     return true;
+};
+
+// The site does not expose a "last week" search facet nor a publish date on search-result
+// cards, so this can only be verified once a detail page has been visited (see
+// extractPublishedRecency). When the bucket is "unknown" (overview mode, or the badge wasn't
+// found) we let the item through rather than silently dropping everything.
+const matchesPublishedSince = (item, publishedSince) => {
+    if (!publishedSince || publishedSince === 'any') return true;
+    const bucket = item.publishedRecencyBucket || 'unknown';
+    if (bucket === 'unknown') return true;
+    if (publishedSince === 'today') return bucket === 'today';
+    return bucket === 'today' || bucket === 'this_week';
 };
 
 const matchesFilters = (item, filters) => {
@@ -614,8 +629,66 @@ const matchesFilters = (item, filters) => {
         withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
         withinRange(item.parking, filters.minParking, filters.maxParking) &&
         (!filters.withParking || (item.parking != null && item.parking > 0)) &&
-        (!filters.requireContactData || Boolean(item.contactPhone) || (Array.isArray(item.contactLinks) && item.contactLinks.length > 0))
+        (!filters.requireContactData || Boolean(item.contactPhone) || (Array.isArray(item.contactLinks) && item.contactLinks.length > 0)) &&
+        matchesPublishedSince(item, filters.publishedSince)
     );
+};
+
+// Parses the human-readable recency badge the site actually renders on detail pages (e.g.
+// "Publicado hoy", "Publicado esta semana", "Publicado hace 2 meses") into a comparable bucket.
+// There is no structured publish-date field anywhere in the HTML/JSON payloads, so this text is
+// the only real signal available for "published in the last week".
+const parsePublishedRecency = (rawText) => {
+    const text = cleanText(rawText).toLowerCase();
+    if (!text) return { bucket: 'unknown', daysAgo: null, rawText: null };
+
+    if (/\bhoy\b/.test(text)) return { bucket: 'today', daysAgo: 0, rawText: text };
+    if (/\bayer\b/.test(text)) return { bucket: 'this_week', daysAgo: 1, rawText: text };
+    if (/esta\s+semana/.test(text)) return { bucket: 'this_week', daysAgo: null, rawText: text };
+
+    const daysMatch = text.match(/hace\s+(\d+)\s*d[ií]as?/);
+    if (daysMatch) {
+        const days = Number(daysMatch[1]);
+        return { bucket: days <= 0 ? 'today' : days <= 7 ? 'this_week' : 'older', daysAgo: days, rawText: text };
+    }
+
+    const weeksMatch = text.match(/hace\s+(\d+)\s*semanas?/);
+    if (weeksMatch) {
+        const weeks = Number(weeksMatch[1]);
+        return { bucket: weeks <= 1 ? 'this_week' : 'older', daysAgo: weeks * 7, rawText: text };
+    }
+
+    if (/hace\s+m[aá]s\s+de\s+un\s+a[ñn]o/.test(text)) {
+        return { bucket: 'older', daysAgo: 366, rawText: text };
+    }
+
+    const monthsMatch = text.match(/hace\s+(\d+)\s*mes(?:es)?/);
+    if (monthsMatch) return { bucket: 'older', daysAgo: Number(monthsMatch[1]) * 30, rawText: text };
+
+    const yearsMatch = text.match(/hace\s+(\d+)\s*a[ñn]os?/);
+    if (yearsMatch) return { bucket: 'older', daysAgo: Number(yearsMatch[1]) * 365, rawText: text };
+
+    return { bucket: 'unknown', daysAgo: null, rawText: text };
+};
+
+// The recency badge lives in the page subtitle as "{headline}  |  Publicado {texto}". Prefer
+// that structured split; fall back to a full-body regex (excluding "Publicado por {seller}",
+// which is an unrelated byline) for layout variants where the subtitle selector doesn't match.
+const extractPublishedRecencyText = ($) => {
+    const badge = cleanText($('[class*="subtitle_rex"], .ui-pdp-subtitle_rex').first().text());
+    if (badge) {
+        const publishedPart = badge
+            .split('|')
+            .map((part) => cleanText(part))
+            .find((part) => /^publicad[oa]\b/i.test(part));
+        if (publishedPart) return publishedPart.replace(/^publicad[oa]\s+/i, '');
+    }
+
+    // cheerio's .text() concatenates <script> contents too, so exclude quote/brace characters
+    // that would otherwise let this regex match leftover JSON instead of real page text.
+    const bodyText = cleanText($('body').text());
+    const match = bodyText.match(/Publicad[oa]\s+(?!por\b)([^|<."{}]{1,40})/i);
+    return match ? cleanText(match[1]) : null;
 };
 
 const currencyFromPortalCode = (value) => {
@@ -727,6 +800,10 @@ const extractOverviewItems = ($, pageNumber) => {
             contactLink: null,
             contactLinks: [],
             contactAvailability: 'unknown',
+            // Publish date is never present on search-result cards; only detail pages expose it.
+            publishedRecencyText: null,
+            publishedRecencyBucket: 'unknown',
+            publishedRecencyDaysAgo: null,
         });
     });
 
@@ -752,6 +829,9 @@ const extractOverviewItems = ($, pageNumber) => {
         contactLink: null,
         contactLinks: [],
         contactAvailability: 'unknown',
+        publishedRecencyText: null,
+        publishedRecencyBucket: 'unknown',
+        publishedRecencyDaysAgo: null,
     }));
 };
 
@@ -815,13 +895,18 @@ const buildSearchUrl = ({ operation, propertyType, location, condition, modality
     return `${BASE_URL}/${segments.map((segment) => segment.replace(/^\/+|\/+$/g, '')).join('/')}`;
 };
 
+// The search UI only offers a real "Publicados hoy" facet, applied as the path segment
+// `_PublishedToday_YES` (verified from the site's own facet payload). There is no `since`
+// query parameter and no "last week" facet at all — the previous implementation set
+// `?since=last_week`, which the site silently ignores, so it never actually filtered anything.
+// For `last_week` we can't narrow the search itself; instead we rely on a post-filter using the
+// real publish-recency badge from each detail page (see extractPublishedRecency).
 const applyPublishedSinceFilter = (url, publishedSince) => {
-    if (!url || !publishedSince || publishedSince === 'any') return url;
+    if (!url || publishedSince !== 'today') return url;
     try {
         const parsed = new URL(decodeHtmlEntities(url));
-        // Respect an explicit `since` coming from searchUrl.
-        if (!parsed.searchParams.has('since')) {
-            parsed.searchParams.set('since', publishedSince);
+        if (!/_PublishedToday_YES\/?$/i.test(parsed.pathname)) {
+            parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}/_PublishedToday_YES`;
         }
         return parsed.toString();
     } catch {
@@ -829,12 +914,17 @@ const applyPublishedSinceFilter = (url, publishedSince) => {
     }
 };
 
+// Filter path segments chain onto the URL (e.g. `.../_PublishedToday_YES`) but pagination needs
+// its own segment starting with a slash. The previous version glued `_Desde_N_NoIndex_True`
+// directly onto the previous segment with no separator, producing a URL the site didn't
+// recognize (breaking pagination past page 1 whenever any other filter segment was present).
 const buildNextPageUrl = (currentUrl, pageNumber) => {
     const offset = (pageNumber - 1) * RESULTS_PER_PAGE + 1;
-    const suffix = `_Desde_${offset}_NoIndex_True`;
-    const url = decodeHtmlEntities(currentUrl);
-    if (/_Desde_\d+_NoIndex_True/i.test(url)) return url.replace(/_Desde_\d+_NoIndex_True/i, suffix);
-    return `${url.replace(/\/$/, '')}${suffix}`;
+    const url = decodeHtmlEntities(currentUrl).replace(/\/$/, '');
+    const withoutPreviousOffset = url
+        .replace(/\/_Desde_\d+_NoIndex_True$/i, '')
+        .replace(/_NoIndex_True$/i, '');
+    return `${withoutPreviousOffset}/_Desde_${offset}_NoIndex_True`;
 };
 
 const extractDetail = ($, request, overview) => {
@@ -880,6 +970,8 @@ const extractDetail = ($, request, overview) => {
     // Keep only direct WhatsApp links with explicit phone numbers.
     const directContactLinks = [...new Set((contactLinks || []).filter((link) => isDirectWhatsAppLink(link)))];
     const contactAvailability = detectContactAvailability($, allPhones, directContactLinks);
+    const publishedRecencyRawText = extractPublishedRecencyText($);
+    const publishedRecency = parsePublishedRecency(publishedRecencyRawText);
 
     return {
         ...overview,
@@ -904,6 +996,9 @@ const extractDetail = ($, request, overview) => {
         contactLink: directContactLinks[0] || null,
         contactLinks: directContactLinks,
         contactAvailability,
+        publishedRecencyText: publishedRecencyRawText || null,
+        publishedRecencyBucket: publishedRecency.bucket,
+        publishedRecencyDaysAgo: publishedRecency.daysAgo,
     };
 };
 
@@ -955,6 +1050,14 @@ const shouldResolveContactViaBrowser = parseBoolean(resolveContactViaBrowser, fa
 const browserConcurrencyLimit = normalizeBrowserConcurrency(browserConcurrency);
 const browserListingCap = calculateBrowserListingCap(maxBrowserListings, maxResultsLimit);
 const maxConsecutiveContactFailuresLimit = parsePositiveIntWithDefault(maxConsecutiveContactFailures, 6);
+
+if (scrapeMode === 'overview' && publishedSince !== 'any') {
+    log.warning(
+        `publishedSince="${publishedSince}" cannot be strictly verified in scrapeMode="overview": ` +
+            'the site only shows a recency badge on detail pages, not on search-result cards. ' +
+            'Results are not guaranteed to be within that window; use scrapeMode="detail" to enforce it.',
+    );
+}
 
 if (searchMode === 'bySearchUrl' && !normalizedSearchUrl) {
     throw new Error('searchUrl is required when searchMode is "bySearchUrl".');
