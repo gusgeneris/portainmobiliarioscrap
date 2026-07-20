@@ -162,6 +162,30 @@ const dismissCookieBanner = async (page) => {
     return false;
 };
 
+// Apify's default proxy pool (no groups specified) is datacenter, which reCAPTCHA Enterprise
+// scores very poorly against, essentially guaranteeing a visible challenge on every attempt.
+// Browser-based contact resolution needs residential IPs to have a realistic success rate.
+const buildBrowserProxyConfiguration = async (rawProxyConfiguration) => {
+    if (rawProxyConfiguration) {
+        return Actor.createProxyConfiguration(rawProxyConfiguration);
+    }
+    try {
+        const residentialProxy = await Actor.createProxyConfiguration({
+            groups: ['RESIDENTIAL'],
+            countryCode: 'CL',
+        });
+        log.info('Browser mode: using RESIDENTIAL proxy group (countryCode=CL) to reduce recaptcha challenges.');
+        return residentialProxy;
+    } catch (err) {
+        log.warning(
+            `Browser mode: could not enable RESIDENTIAL proxy (${err.message}). Falling back to the default ` +
+                'datacenter pool, which is much more likely to trigger recaptcha challenges on every listing. ' +
+                'Provide "proxyConfiguration" with residential access to fix this.',
+        );
+        return Actor.createProxyConfiguration();
+    }
+};
+
 const hasRecaptchaChallenge = async (page) => {
     const count = await page
         .locator('iframe[src*="recaptcha"], iframe[title*="recaptcha" i]')
@@ -220,6 +244,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // immediate `force: true` click frequently fires before hydration completes and silently does
 // nothing (no request, no error). Retrying a few times with short gaps reliably catches the
 // window once the page becomes interactive, without materially increasing runtime on the happy path.
+const randomBetween = (min, max) => Math.floor(min + Math.random() * (max - min));
+
 const clickWhatsAppButtonAndWaitForApiResponse = async ({ page, locator, endpointFragment, maxAttempts = 3 }) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         const responsePromise = page
@@ -230,6 +256,15 @@ const clickWhatsAppButtonAndWaitForApiResponse = async ({ page, locator, endpoin
             .catch(() => null);
 
         await locator.scrollIntoViewIfNeeded().catch(() => null);
+        // A brief mouse hover + randomized pause before clicking mimics human interaction more
+        // closely than an instant click, which risk engines like recaptcha enterprise weigh in.
+        const box = await locator.boundingBox().catch(() => null);
+        if (box) {
+            await page
+                .mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: randomBetween(5, 12) })
+                .catch(() => null);
+        }
+        await sleep(randomBetween(150, 400));
         // First attempt uses Playwright's normal actionability wait (helps skip until the
         // element is actually interactive); later attempts force the click as a fallback.
         await locator.click({ timeout: attempt === 1 ? 2500 : 1200, force: attempt > 1 }).catch(() => null);
@@ -930,7 +965,7 @@ if (searchMode === 'byListingUrl' && (!Array.isArray(listingUrls) || listingUrls
 }
 
 if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveContactViaBrowser) {
-    const proxy = await Actor.createProxyConfiguration(proxyConfiguration);
+    const proxy = await buildBrowserProxyConfiguration(proxyConfiguration);
     const requestQueue = await Actor.openRequestQueue();
     const seenListingUrls = new Set();
     let outputCount = 0;
@@ -966,6 +1001,11 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         maxRequestRetries: 0,
         minConcurrency: 1,
         maxConcurrency: browserConcurrencyLimit,
+        // Keep cookies/session tied to each proxy IP across requests: a "returning visitor" with
+        // consistent cookies scores better with recaptcha than a fresh anonymous session every time.
+        useSessionPool: true,
+        persistCookiesPerSession: true,
+        sessionPoolOptions: { maxPoolSize: browserConcurrencyLimit },
         navigationTimeoutSecs: 20,
         // Contact extraction now retries the click up to 3x (with a load-state grace wait) to
         // survive hydration lag, so give the handler more headroom than the older single-shot flow.
