@@ -144,8 +144,34 @@ const extractPhoneFromWhatsAppLink = (link) => {
     return null;
 };
 
+const dismissCookieBanner = async (page) => {
+    const selectors = [
+        '#newCookieDisclaimerButton',
+        'button:has-text("Entendido")',
+        '[class*="cookie" i] button',
+        '[id*="cookie" i] button',
+    ];
+    for (const selector of selectors) {
+        const locator = page.locator(selector).first();
+        const isVisible = await locator.isVisible().catch(() => false);
+        if (isVisible) {
+            await locator.click({ timeout: 1500 }).catch(() => null);
+            return true;
+        }
+    }
+    return false;
+};
+
+const hasRecaptchaChallenge = async (page) => {
+    const count = await page
+        .locator('iframe[src*="recaptcha"], iframe[title*="recaptcha" i]')
+        .count()
+        .catch(() => 0);
+    return count > 0;
+};
+
 const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
-    if (!itemId) return null;
+    if (!itemId) return { target: null, phone: null, recaptchaChallenge: false };
     const compactItemId = itemId.replace('-', '');
     const endpointFragment = `/p/api/items/${compactItemId}/contact-info/whatsapp`;
     const selectors = [
@@ -166,28 +192,34 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         }
     }
 
-    if (!selectedLocator) return null;
+    if (!selectedLocator) return { target: null, phone: null, recaptchaChallenge: false };
 
     const responsePromise = page
         .waitForResponse(
             (response) =>
                 response.url().includes(endpointFragment) &&
                 response.request().method() === 'GET',
-            { timeout: 6000 },
+            { timeout: 4000 },
         )
         .catch(() => null);
 
-    await selectedLocator.click({ timeout: 2500, force: true }).catch(() => null);
+    await selectedLocator.scrollIntoViewIfNeeded().catch(() => null);
+    await selectedLocator.click({ timeout: 2000, force: true }).catch(() => null);
     const response = await responsePromise;
-    if (!response?.ok()) return null;
+
+    if (!response?.ok()) {
+        const recaptchaChallenge = await hasRecaptchaChallenge(page);
+        return { target: null, phone: null, recaptchaChallenge };
+    }
 
     const payload = await response.json().catch(() => null);
     const target = normalizeContactLink(payload?.whatsapp?.target);
-    if (!target) return null;
+    if (!target) return { target: null, phone: null, recaptchaChallenge: false };
 
     return {
         target,
         phone: extractPhoneFromWhatsAppLink(target),
+        recaptchaChallenge: false,
     };
 };
 
@@ -718,6 +750,7 @@ const {
     resolveContactViaBrowser,
     browserConcurrency,
     maxBrowserListings,
+    maxConsecutiveContactFailures,
 } = input;
 
 const includeDetailsEnabled = parseBoolean(includeDetails, true);
@@ -743,6 +776,7 @@ const filters = buildFilters(input);
 const shouldResolveContactViaBrowser = parseBoolean(resolveContactViaBrowser, false);
 const browserConcurrencyLimit = normalizeBrowserConcurrency(browserConcurrency);
 const browserListingCap = calculateBrowserListingCap(maxBrowserListings, maxResultsLimit);
+const maxConsecutiveContactFailuresLimit = parsePositiveIntWithDefault(maxConsecutiveContactFailures, 6);
 
 if (searchMode === 'bySearchUrl' && !normalizedSearchUrl) {
     throw new Error('searchUrl is required when searchMode is "bySearchUrl".');
@@ -780,14 +814,17 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         });
     }
 
+    let consecutiveContactFailures = 0;
+    let recaptchaFailureCount = 0;
+
     const browserCrawler = new PlaywrightCrawler({
         requestQueue,
         proxyConfiguration: proxy,
-        maxRequestRetries: 1,
+        maxRequestRetries: 0,
         minConcurrency: 1,
         maxConcurrency: browserConcurrencyLimit,
         navigationTimeoutSecs: 20,
-        requestHandlerTimeoutSecs: 30,
+        requestHandlerTimeoutSecs: 25,
         preNavigationHooks: [
             async ({ page }, gotoOptions) => {
                 gotoOptions.waitUntil = 'domcontentloaded';
@@ -803,12 +840,37 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         ],
         async requestHandler({ request, page, parseWithCheerio, log: crawlerLog }) {
             if (outputCount >= maxResultsLimit) return;
+
+            const overview = request.userData.overview || {};
+            const itemId = overview.id || extractListingId(request.loadedUrl || request.url);
+
+            await dismissCookieBanner(page);
+            const realContact = await extractRealWhatsAppFromApiResponse({ page, itemId });
+            const hasDirectContact = Boolean(realContact?.phone || realContact?.target);
+
+            // Fail-fast: skip full detail parsing when contact is required but unavailable,
+            // this is the dominant cost driver when most listings don't yield a direct contact.
+            if (filters.requireContactData && !hasDirectContact) {
+                consecutiveContactFailures += 1;
+                if (realContact?.recaptchaChallenge) recaptchaFailureCount += 1;
+                crawlerLog.info(
+                    `Filtered out (no direct contact${realContact?.recaptchaChallenge ? ', recaptcha challenge' : ''}): ${itemId || request.url}`,
+                );
+
+                if (consecutiveContactFailures >= maxConsecutiveContactFailuresLimit) {
+                    crawlerLog.warning(
+                        `Stopping browser crawler after ${consecutiveContactFailures} consecutive contact failures` +
+                            `${recaptchaFailureCount > 0 ? ` (${recaptchaFailureCount} blocked by recaptcha)` : ''}.`,
+                    );
+                    await browserCrawler.stop('Too many consecutive contact failures.');
+                }
+                return;
+            }
+
+            consecutiveContactFailures = 0;
+
             const $ = await parseWithCheerio();
-            const detail = extractDetail($, request, request.userData.overview || {});
-            const realContact = await extractRealWhatsAppFromApiResponse({
-                page,
-                itemId: detail.id || extractListingId(request.loadedUrl || request.url),
-            });
+            const detail = extractDetail($, request, overview);
 
             if (realContact?.phone) {
                 const mergedPhones = [...new Set([realContact.phone, ...(detail.contactPhones || [])])];

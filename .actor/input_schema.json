@@ -238,6 +238,12 @@
       "description": "Only when resolveContactViaBrowser=true. Limits how many listingUrls are opened in browser.",
       "editor": "textfield"
     },
+    "maxConsecutiveContactFailures": {
+      "title": "Max consecutive contact failures before stopping",
+      "type": "string",
+      "description": "Only when resolveContactViaBrowser=true. Stops the browser crawler early after this many consecutive listings without a direct contact, to avoid wasting time when most listings are blocked (e.g. by recaptcha). Default 6.",
+      "editor": "textfield"
+    },
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "type": "object",
