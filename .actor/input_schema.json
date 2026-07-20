@@ -225,6 +225,19 @@
       "default": false,
       "editor": "checkbox"
     },
+    "browserConcurrency": {
+      "title": "Browser concurrency",
+      "type": "string",
+      "description": "Only when resolveContactViaBrowser=true. Recommended 1-2. Higher values increase CPU usage.",
+      "default": "1",
+      "editor": "textfield"
+    },
+    "maxBrowserListings": {
+      "title": "Max browser listings to scan",
+      "type": "string",
+      "description": "Only when resolveContactViaBrowser=true. Limits how many listingUrls are opened in browser.",
+      "editor": "textfield"
+    },
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "type": "object",

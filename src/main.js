@@ -156,34 +156,58 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         '[class*="whatsapp"]',
     ];
 
+    let selectedLocator = null;
     for (const selector of selectors) {
-        const responsePromise = page
-            .waitForResponse(
-                (response) =>
-                    response.url().includes(endpointFragment) &&
-                    response.request().method() === 'GET',
-                { timeout: 12000 },
-            )
-            .catch(() => null);
-
         const locator = page.locator(selector).first();
         const isVisible = await locator.isVisible().catch(() => false);
-        if (!isVisible) continue;
-
-        await locator.click({ timeout: 4000, force: true }).catch(() => null);
-        const response = await responsePromise;
-        if (!response?.ok()) continue;
-
-        const payload = await response.json().catch(() => null);
-        const target = normalizeContactLink(payload?.whatsapp?.target);
-        if (!target) continue;
-        return {
-            target,
-            phone: extractPhoneFromWhatsAppLink(target),
-        };
+        if (isVisible) {
+            selectedLocator = locator;
+            break;
+        }
     }
 
-    return null;
+    if (!selectedLocator) return null;
+
+    const responsePromise = page
+        .waitForResponse(
+            (response) =>
+                response.url().includes(endpointFragment) &&
+                response.request().method() === 'GET',
+            { timeout: 6000 },
+        )
+        .catch(() => null);
+
+    await selectedLocator.click({ timeout: 2500, force: true }).catch(() => null);
+    const response = await responsePromise;
+    if (!response?.ok()) return null;
+
+    const payload = await response.json().catch(() => null);
+    const target = normalizeContactLink(payload?.whatsapp?.target);
+    if (!target) return null;
+
+    return {
+        target,
+        phone: extractPhoneFromWhatsAppLink(target),
+    };
+};
+
+const calculateBrowserListingCap = (value, maxResultsLimit) => {
+    const parsed = parseIntOrNull(value);
+    if (parsed != null && parsed > 0) return parsed;
+    // Default cap to avoid very long runs when many URLs are sent.
+    return Math.max(maxResultsLimit * 2, maxResultsLimit);
+};
+
+const normalizeBrowserConcurrency = (value) => {
+    const parsed = parseIntOrNull(value);
+    if (parsed == null || parsed <= 0) return 1;
+    return Math.min(parsed, 2);
+};
+
+const pickListingUrlsForBrowserMode = (urls, maxResultsLimit, browserListingCap) => {
+    if (!Array.isArray(urls)) return [];
+    const cap = Math.max(maxResultsLimit, browserListingCap);
+    return urls.slice(0, cap);
 };
 
 const prioritizeContactLinks = ({ phones, contactLinks, listingUrl, title }) => {
@@ -692,6 +716,8 @@ const {
     maxPages,
     proxyConfiguration,
     resolveContactViaBrowser,
+    browserConcurrency,
+    maxBrowserListings,
 } = input;
 
 const includeDetailsEnabled = parseBoolean(includeDetails, true);
@@ -715,6 +741,8 @@ const maxResultsLimit = parsePositiveIntWithDefault(maxResults, 5);
 const maxPagesLimit = parsePositiveIntWithDefault(maxPages, 5);
 const filters = buildFilters(input);
 const shouldResolveContactViaBrowser = parseBoolean(resolveContactViaBrowser, false);
+const browserConcurrencyLimit = normalizeBrowserConcurrency(browserConcurrency);
+const browserListingCap = calculateBrowserListingCap(maxBrowserListings, maxResultsLimit);
 
 if (searchMode === 'bySearchUrl' && !normalizedSearchUrl) {
     throw new Error('searchUrl is required when searchMode is "bySearchUrl".');
@@ -729,8 +757,13 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
     const requestQueue = await Actor.openRequestQueue();
     const seenListingUrls = new Set();
     let outputCount = 0;
+    const urlsForBrowser = pickListingUrlsForBrowserMode(listingUrls, maxResultsLimit, browserListingCap);
 
-    for (const rawUrl of listingUrls) {
+    if (listingUrls.length > urlsForBrowser.length) {
+        log.warning(`Browser mode will process ${urlsForBrowser.length}/${listingUrls.length} listing URLs. Increase maxBrowserListings to scan more.`);
+    }
+
+    for (const rawUrl of urlsForBrowser) {
         const normalized = normalizeListingUrl(rawUrl);
         if (!normalized || seenListingUrls.has(normalized)) continue;
         seenListingUrls.add(normalized);
@@ -752,13 +785,13 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         proxyConfiguration: proxy,
         maxRequestRetries: 1,
         minConcurrency: 1,
-        maxConcurrency: 1,
-        navigationTimeoutSecs: 30,
-        requestHandlerTimeoutSecs: 45,
+        maxConcurrency: browserConcurrencyLimit,
+        navigationTimeoutSecs: 20,
+        requestHandlerTimeoutSecs: 30,
         preNavigationHooks: [
             async ({ page }, gotoOptions) => {
                 gotoOptions.waitUntil = 'domcontentloaded';
-                gotoOptions.timeout = 30000;
+                gotoOptions.timeout = 20000;
                 await page.route('**/*', (route) => {
                     const resourceType = route.request().resourceType();
                     if (resourceType === 'image' || resourceType === 'media' || resourceType === 'font') {
