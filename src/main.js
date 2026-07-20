@@ -181,6 +181,44 @@ const parseListingUrlsInput = (value) => {
     const normalized = normalizeNullableString(value);
     if (!normalized) return [];
 
+    const parseAsJsonArray = (rawText) => {
+        let current = rawText;
+        for (let i = 0; i < 3; i += 1) {
+            try {
+                const parsed = JSON.parse(current);
+                if (Array.isArray(parsed)) {
+                    return parsed.map((entry) => normalizeNullableString(entry)).filter(Boolean);
+                }
+                if (typeof parsed === 'string') {
+                    current = parsed;
+                    continue;
+                }
+                return [];
+            } catch {
+                return [];
+            }
+        }
+        return [];
+    };
+
+    const jsonCandidates = [
+        normalized,
+        decodeHtmlEntities(normalized),
+        normalized.replace(/^"(.*)"$/s, '$1'),
+        normalized.replace(/^"(.*)"$/s, '$1').replace(/\\\\+"/g, '"'),
+    ];
+
+    for (const candidate of jsonCandidates) {
+        const parsed = parseAsJsonArray(candidate);
+        if (parsed.length > 0) return parsed;
+    }
+
+    // Fallback for heavily escaped payloads from webhook middlewares.
+    const regexUrls = [...normalized.matchAll(/https?:\/\/[^\s"'\\,\]]+/gi)].map((match) => match[0]);
+    if (regexUrls.length > 0) {
+        return regexUrls.map((entry) => normalizeNullableString(entry)).filter(Boolean);
+    }
+
     try {
         const parsed = JSON.parse(normalized);
         if (Array.isArray(parsed)) {
