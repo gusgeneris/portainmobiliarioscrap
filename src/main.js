@@ -167,6 +167,15 @@ const normalizeChoice = (value, allowedValues, fallback) => {
     return fallback;
 };
 
+const parseBoolean = (value, defaultValue = false) => {
+    if (value === null || value === undefined) return defaultValue;
+    if (typeof value === 'boolean') return value;
+    const normalized = cleanText(String(value)).toLowerCase();
+    if (['true', '1', 'yes', 'si', 'sí'].includes(normalized)) return true;
+    if (['false', '0', 'no'].includes(normalized)) return false;
+    return defaultValue;
+};
+
 const parseListingUrlsInput = (value) => {
     if (Array.isArray(value)) return value.map((entry) => normalizeNullableString(entry)).filter(Boolean);
     const normalized = normalizeNullableString(value);
@@ -211,8 +220,8 @@ const buildFilters = (input) => ({
     maxBathrooms: parseIntOrNull(input.maxBathrooms),
     minParking: parseIntOrNull(input.minParking),
     maxParking: parseIntOrNull(input.maxParking),
-    withParking: Boolean(input.withParking),
-    requireContactData: input.requireContactData !== false,
+    withParking: parseBoolean(input.withParking, false),
+    requireContactData: parseBoolean(input.requireContactData, true),
 });
 
 const withinRange = (value, min, max) => {
@@ -522,7 +531,8 @@ const {
     proxyConfiguration,
 } = input;
 
-const inferredScrapeMode = includeDetails === true ? 'detail' : 'overview';
+const includeDetailsEnabled = parseBoolean(includeDetails, true);
+const inferredScrapeMode = includeDetailsEnabled ? 'detail' : 'overview';
 const scrapeMode = normalizeChoice(rawScrapeMode, ['overview', 'detail'], inferredScrapeMode);
 const searchMode = normalizeChoice(rawSearchMode, ['byPlace', 'bySearchUrl', 'byListingUrl'], 'byPlace');
 const operation = normalizeChoice(rawOperation, ['venta', 'arriendo', 'arriendo-temporal'], 'venta');

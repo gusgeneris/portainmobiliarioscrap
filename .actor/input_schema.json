@@ -8,7 +8,7 @@
       "title": "Scrape mode",
       "type": "string",
       "description": "overview (search cards only) or detail (opens each listing).",
-      "default": "overview",
+      "default": "detail",
       "enum": [
         "overview",
         "detail"
