@@ -89,12 +89,37 @@ const extractPhones = ($) => {
     return [...phones].filter(Boolean);
 };
 
-const detectContactAvailability = ($, phones) => {
+const extractContactLinks = ($) => {
+    const links = new Set();
+    $('a[href]').each((_, el) => {
+        const href = ($(el).attr('href') || '').trim();
+        if (!href) return;
+        const lower = href.toLowerCase();
+        if (lower.includes('wa.me/') || lower.includes('whatsapp') || lower.includes('contactar') || lower.includes('vis-modals')) {
+            links.add(decodeHtmlEntities(href));
+        }
+    });
+
+    // Parse escaped targets embedded in page state/scripts.
+    const html = $.html();
+    const targetMatches = [...html.matchAll(/"target":"(https:\\u002F\\u002F[^"]+)"/g)];
+    for (const match of targetMatches) {
+        const decoded = decodeJsonEscapedText(match[1]);
+        const lower = decoded.toLowerCase();
+        if (lower.includes('whatsapp') || lower.includes('wa.me/') || lower.includes('action=whatsapp')) {
+            links.add(decoded);
+        }
+    }
+
+    return [...links].filter(Boolean);
+};
+
+const detectContactAvailability = ($, phones, contactLinks) => {
     const hasPhone = Array.isArray(phones) && phones.length > 0;
     if (hasPhone) return 'phone_visible';
 
-    const hasWhatsappLink = $('a[href*="wa.me/"], a[href*="whatsapp"]').length > 0;
-    if (hasWhatsappLink) return 'whatsapp_visible';
+    const hasContactLink = Array.isArray(contactLinks) && contactLinks.length > 0;
+    if (hasContactLink) return 'whatsapp_visible';
 
     const bodyText = cleanText($('body').text()).toLowerCase();
     const hasContactFormHints =
@@ -187,6 +212,7 @@ const buildFilters = (input) => ({
     minParking: parseIntOrNull(input.minParking),
     maxParking: parseIntOrNull(input.maxParking),
     withParking: Boolean(input.withParking),
+    requireContactData: input.requireContactData !== false,
 });
 
 const withinRange = (value, min, max) => {
@@ -209,7 +235,8 @@ const matchesFilters = (item, filters) => {
         withinRange(item.bedrooms, filters.minBedrooms, filters.maxBedrooms) &&
         withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
         withinRange(item.parking, filters.minParking, filters.maxParking) &&
-        (!filters.withParking || (item.parking != null && item.parking > 0))
+        (!filters.withParking || (item.parking != null && item.parking > 0)) &&
+        (!filters.requireContactData || Boolean(item.contactPhone) || (Array.isArray(item.contactLinks) && item.contactLinks.length > 0))
     );
 };
 
@@ -319,6 +346,8 @@ const extractOverviewItems = ($, pageNumber) => {
             ...summary,
             contactPhone: null,
             contactPhones: [],
+            contactLink: null,
+            contactLinks: [],
             contactAvailability: 'unknown',
         });
     });
@@ -342,6 +371,8 @@ const extractOverviewItems = ($, pageNumber) => {
         parking: null,
         contactPhone: null,
         contactPhones: [],
+        contactLink: null,
+        contactLinks: [],
         contactAvailability: 'unknown',
     }));
 };
@@ -443,7 +474,8 @@ const extractDetail = ($, request, overview) => {
     const priceInfo = parsePrice(priceText);
     const summary = parseSummaryByRegex(fullText);
     const phones = extractPhones($);
-    const contactAvailability = detectContactAvailability($, phones);
+    const contactLinks = extractContactLinks($);
+    const contactAvailability = detectContactAvailability($, phones, contactLinks);
 
     return {
         ...overview,
@@ -465,6 +497,8 @@ const extractDetail = ($, request, overview) => {
         ...summary,
         contactPhone: phones[0] || null,
         contactPhones: phones,
+        contactLink: contactLinks[0] || null,
+        contactLinks,
         contactAvailability,
     };
 };

@@ -199,6 +199,13 @@
       "default": true,
       "editor": "checkbox"
     },
+    "requireContactData": {
+      "title": "Require contact data",
+      "type": "boolean",
+      "description": "If true, only returns properties with visible phone or contact link.",
+      "default": true,
+      "editor": "checkbox"
+    },
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "type": "object",
