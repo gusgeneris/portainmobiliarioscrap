@@ -199,6 +199,7 @@ const emptyContactResult = (extra = {}) => ({
     failureReason: null,
     httpStatus: null,
     selectorUsed: null,
+    clickAttempts: 0,
     ...extra,
 });
 
@@ -207,8 +208,38 @@ const formatContactExtractionLog = (realContact) => {
     if (realContact?.displayMessage) parts.push(`message="${realContact.displayMessage}"`);
     if (realContact?.httpStatus != null) parts.push(`http=${realContact.httpStatus}`);
     if (realContact?.selectorUsed) parts.push(`selector="${realContact.selectorUsed}"`);
+    if (realContact?.clickAttempts) parts.push(`clickAttempts=${realContact.clickAttempts}`);
     if (realContact?.recaptchaChallenge) parts.push('recaptcha=true');
     return parts.join(', ');
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Navigation only waits for `domcontentloaded` (for speed), but the WhatsApp button's click
+// handler is attached by React after hydration, which can lag behind that event. A single
+// immediate `force: true` click frequently fires before hydration completes and silently does
+// nothing (no request, no error). Retrying a few times with short gaps reliably catches the
+// window once the page becomes interactive, without materially increasing runtime on the happy path.
+const clickWhatsAppButtonAndWaitForApiResponse = async ({ page, locator, endpointFragment, maxAttempts = 3 }) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const responsePromise = page
+            .waitForResponse(
+                (response) => response.url().includes(endpointFragment) && response.request().method() === 'GET',
+                { timeout: 2500 },
+            )
+            .catch(() => null);
+
+        await locator.scrollIntoViewIfNeeded().catch(() => null);
+        // First attempt uses Playwright's normal actionability wait (helps skip until the
+        // element is actually interactive); later attempts force the click as a fallback.
+        await locator.click({ timeout: attempt === 1 ? 2500 : 1200, force: attempt > 1 }).catch(() => null);
+
+        const response = await responsePromise;
+        if (response) return { response, attempts: attempt };
+
+        if (attempt < maxAttempts) await sleep(500);
+    }
+    return { response: null, attempts: maxAttempts };
 };
 
 const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
@@ -245,24 +276,23 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         });
     }
 
-    const responsePromise = page
-        .waitForResponse(
-            (response) =>
-                response.url().includes(endpointFragment) &&
-                response.request().method() === 'GET',
-            { timeout: 4000 },
-        )
-        .catch(() => null);
+    // Give the page a short grace period to finish hydrating (script execution/`load`) before the
+    // first click attempt; navigation only waited for `domcontentloaded`, which fires before React
+    // attaches its event handlers on heavier pages.
+    await page.waitForLoadState('load', { timeout: 4000 }).catch(() => null);
 
-    await selectedLocator.scrollIntoViewIfNeeded().catch(() => null);
-    await selectedLocator.click({ timeout: 2000, force: true }).catch(() => null);
-    const response = await responsePromise;
+    const { response, attempts } = await clickWhatsAppButtonAndWaitForApiResponse({
+        page,
+        locator: selectedLocator,
+        endpointFragment,
+    });
 
     if (!response) {
         const recaptchaChallenge = await hasRecaptchaChallenge(page);
         return emptyContactResult({
             selectorUsed,
             recaptchaChallenge,
+            clickAttempts: attempts,
             failureReason: recaptchaChallenge
                 ? CONTACT_FAILURE_REASONS.RECAPTCHA_CHALLENGE
                 : CONTACT_FAILURE_REASONS.API_RESPONSE_TIMEOUT,
@@ -280,6 +310,7 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         return emptyContactResult({
             selectorUsed,
             httpStatus,
+            clickAttempts: attempts,
             failureReason: CONTACT_FAILURE_REASONS.INVALID_API_PAYLOAD,
         });
     }
@@ -288,6 +319,7 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         return emptyContactResult({
             selectorUsed,
             httpStatus,
+            clickAttempts: attempts,
             dailyLimitReached: true,
             displayMessage,
             failureReason: CONTACT_FAILURE_REASONS.DAILY_LIMIT_REACHED,
@@ -299,6 +331,7 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         return emptyContactResult({
             selectorUsed,
             httpStatus,
+            clickAttempts: attempts,
             recaptchaChallenge,
             displayMessage,
             failureReason: recaptchaChallenge
@@ -314,6 +347,7 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         return emptyContactResult({
             selectorUsed,
             httpStatus,
+            clickAttempts: attempts,
             displayMessage,
             failureReason: CONTACT_FAILURE_REASONS.MISSING_WHATSAPP_TARGET,
         });
@@ -328,6 +362,7 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         failureReason: null,
         httpStatus,
         selectorUsed,
+        clickAttempts: attempts,
     };
 };
 
@@ -932,7 +967,9 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         minConcurrency: 1,
         maxConcurrency: browserConcurrencyLimit,
         navigationTimeoutSecs: 20,
-        requestHandlerTimeoutSecs: 25,
+        // Contact extraction now retries the click up to 3x (with a load-state grace wait) to
+        // survive hydration lag, so give the handler more headroom than the older single-shot flow.
+        requestHandlerTimeoutSecs: 30,
         preNavigationHooks: [
             async ({ page }, gotoOptions) => {
                 gotoOptions.waitUntil = 'domcontentloaded';
