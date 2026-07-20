@@ -783,7 +783,7 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
     const browserCrawler = new PlaywrightCrawler({
         requestQueue,
         proxyConfiguration: proxy,
-        maxRequestRetries: 1,
+        maxRequestRetries: 0,
         minConcurrency: 1,
         maxConcurrency: browserConcurrencyLimit,
         navigationTimeoutSecs: 20,
@@ -803,12 +803,21 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
         ],
         async requestHandler({ request, page, parseWithCheerio, log: crawlerLog }) {
             if (outputCount >= maxResultsLimit) return;
-            const $ = await parseWithCheerio();
-            const detail = extractDetail($, request, request.userData.overview || {});
+            const overview = request.userData.overview || {};
+            const itemId = overview.id || extractListingId(request.loadedUrl || request.url);
             const realContact = await extractRealWhatsAppFromApiResponse({
                 page,
-                itemId: detail.id || extractListingId(request.loadedUrl || request.url),
+                itemId,
             });
+
+            const hasDirectContact = Boolean(realContact?.phone || realContact?.target);
+            if (filters.requireContactData && !hasDirectContact) {
+                crawlerLog.info(`Filtered out (no direct contact): ${itemId || request.url}`);
+                return;
+            }
+
+            const $ = await parseWithCheerio();
+            const detail = extractDetail($, request, overview);
 
             if (realContact?.phone) {
                 const mergedPhones = [...new Set([realContact.phone, ...(detail.contactPhones || [])])];
