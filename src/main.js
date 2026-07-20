@@ -178,17 +178,43 @@ const isDailyLimitMessage = (message) => {
     return DAILY_LIMIT_MESSAGE_HINTS.some((hint) => normalized.includes(hint));
 };
 
+const CONTACT_FAILURE_REASONS = {
+    MISSING_ITEM_ID: 'missing_item_id',
+    WHATSAPP_BUTTON_NOT_FOUND: 'whatsapp_button_not_found',
+    API_RESPONSE_TIMEOUT: 'api_response_timeout',
+    RECAPTCHA_CHALLENGE: 'recaptcha_challenge',
+    DAILY_LIMIT_REACHED: 'daily_limit_reached',
+    API_HTTP_ERROR: 'api_http_error',
+    API_REJECTED: 'api_rejected',
+    MISSING_WHATSAPP_TARGET: 'missing_whatsapp_target',
+    INVALID_API_PAYLOAD: 'invalid_api_payload',
+};
+
 const emptyContactResult = (extra = {}) => ({
     target: null,
     phone: null,
     recaptchaChallenge: false,
     dailyLimitReached: false,
     displayMessage: null,
+    failureReason: null,
+    httpStatus: null,
+    selectorUsed: null,
     ...extra,
 });
 
+const formatContactExtractionLog = (realContact) => {
+    const parts = [realContact?.failureReason || 'unknown'];
+    if (realContact?.displayMessage) parts.push(`message="${realContact.displayMessage}"`);
+    if (realContact?.httpStatus != null) parts.push(`http=${realContact.httpStatus}`);
+    if (realContact?.selectorUsed) parts.push(`selector="${realContact.selectorUsed}"`);
+    if (realContact?.recaptchaChallenge) parts.push('recaptcha=true');
+    return parts.join(', ');
+};
+
 const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
-    if (!itemId) return emptyContactResult();
+    if (!itemId) {
+        return emptyContactResult({ failureReason: CONTACT_FAILURE_REASONS.MISSING_ITEM_ID });
+    }
     const compactItemId = itemId.replace('-', '');
     const endpointFragment = `/p/api/items/${compactItemId}/contact-info/whatsapp`;
     // Prefer the exact button class from the real DOM over generic text/attribute matches.
@@ -202,16 +228,22 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
     ];
 
     let selectedLocator = null;
+    let selectorUsed = null;
     for (const selector of selectors) {
         const locator = page.locator(selector).first();
         const isVisible = await locator.isVisible().catch(() => false);
         if (isVisible) {
             selectedLocator = locator;
+            selectorUsed = selector;
             break;
         }
     }
 
-    if (!selectedLocator) return emptyContactResult();
+    if (!selectedLocator) {
+        return emptyContactResult({
+            failureReason: CONTACT_FAILURE_REASONS.WHATSAPP_BUTTON_NOT_FOUND,
+        });
+    }
 
     const responsePromise = page
         .waitForResponse(
@@ -228,22 +260,64 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
 
     if (!response) {
         const recaptchaChallenge = await hasRecaptchaChallenge(page);
-        return emptyContactResult({ recaptchaChallenge });
+        return emptyContactResult({
+            selectorUsed,
+            recaptchaChallenge,
+            failureReason: recaptchaChallenge
+                ? CONTACT_FAILURE_REASONS.RECAPTCHA_CHALLENGE
+                : CONTACT_FAILURE_REASONS.API_RESPONSE_TIMEOUT,
+        });
     }
 
     // The endpoint returns HTTP 200 even for business-rule failures (e.g. daily quota),
     // so the JSON payload's `success`/`display_message` fields are the real signal.
+    const httpStatus = response.status();
     const payload = await response.json().catch(() => null);
     const displayMessage = typeof payload?.display_message === 'string' ? payload.display_message : null;
     const dailyLimitReached = payload?.success === false && isDailyLimitMessage(displayMessage);
 
+    if (payload == null) {
+        return emptyContactResult({
+            selectorUsed,
+            httpStatus,
+            failureReason: CONTACT_FAILURE_REASONS.INVALID_API_PAYLOAD,
+        });
+    }
+
+    if (dailyLimitReached) {
+        return emptyContactResult({
+            selectorUsed,
+            httpStatus,
+            dailyLimitReached: true,
+            displayMessage,
+            failureReason: CONTACT_FAILURE_REASONS.DAILY_LIMIT_REACHED,
+        });
+    }
+
     if (!response.ok() || payload?.success === false) {
-        const recaptchaChallenge = dailyLimitReached ? false : await hasRecaptchaChallenge(page);
-        return emptyContactResult({ recaptchaChallenge, dailyLimitReached, displayMessage });
+        const recaptchaChallenge = await hasRecaptchaChallenge(page);
+        return emptyContactResult({
+            selectorUsed,
+            httpStatus,
+            recaptchaChallenge,
+            displayMessage,
+            failureReason: recaptchaChallenge
+                ? CONTACT_FAILURE_REASONS.RECAPTCHA_CHALLENGE
+                : !response.ok()
+                  ? CONTACT_FAILURE_REASONS.API_HTTP_ERROR
+                  : CONTACT_FAILURE_REASONS.API_REJECTED,
+        });
     }
 
     const target = normalizeContactLink(payload?.whatsapp?.target);
-    if (!target) return emptyContactResult({ displayMessage });
+    if (!target) {
+        return emptyContactResult({
+            selectorUsed,
+            httpStatus,
+            displayMessage,
+            failureReason: CONTACT_FAILURE_REASONS.MISSING_WHATSAPP_TARGET,
+        });
+    }
 
     return {
         target,
@@ -251,6 +325,9 @@ const extractRealWhatsAppFromApiResponse = async ({ page, itemId }) => {
         recaptchaChallenge: false,
         dailyLimitReached: false,
         displayMessage,
+        failureReason: null,
+        httpStatus,
+        selectorUsed,
     };
 };
 
@@ -884,7 +961,7 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
             // attempt will fail the same way until the quota resets, so stop the whole run immediately.
             if (realContact?.dailyLimitReached) {
                 crawlerLog.warning(
-                    `Daily WhatsApp contact-reveal limit reached (server message: "${realContact.displayMessage}"). ` +
+                    `Daily WhatsApp contact-reveal limit reached (${formatContactExtractionLog(realContact)}). ` +
                         `Stopping browser crawler early: ${itemId || request.url}`,
                 );
                 await browserCrawler.stop('Daily contact-reveal limit reached on portalinmobiliario.com.');
@@ -897,7 +974,7 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
                 consecutiveContactFailures += 1;
                 if (realContact?.recaptchaChallenge) recaptchaFailureCount += 1;
                 crawlerLog.info(
-                    `Filtered out (no direct contact${realContact?.recaptchaChallenge ? ', recaptcha challenge' : ''}): ${itemId || request.url}`,
+                    `Filtered out (WhatsApp not extracted: ${formatContactExtractionLog(realContact)}): ${itemId || request.url}`,
                 );
 
                 if (consecutiveContactFailures >= maxConsecutiveContactFailuresLimit) {
