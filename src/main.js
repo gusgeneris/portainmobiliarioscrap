@@ -446,6 +446,20 @@ const buildSearchUrl = ({ operation, propertyType, location, condition, modality
     return `${BASE_URL}/${segments.map((segment) => segment.replace(/^\/+|\/+$/g, '')).join('/')}`;
 };
 
+const applyPublishedSinceFilter = (url, publishedSince) => {
+    if (!url || !publishedSince || publishedSince === 'any') return url;
+    try {
+        const parsed = new URL(decodeHtmlEntities(url));
+        // Respect an explicit `since` coming from searchUrl.
+        if (!parsed.searchParams.has('since')) {
+            parsed.searchParams.set('since', publishedSince);
+        }
+        return parsed.toString();
+    } catch {
+        return url;
+    }
+};
+
 const buildNextPageUrl = (currentUrl, pageNumber) => {
     const offset = (pageNumber - 1) * RESULTS_PER_PAGE + 1;
     const suffix = `_Desde_${offset}_NoIndex_True`;
@@ -524,6 +538,7 @@ const {
     location: rawLocation = 'santiago-metropolitana',
     condition: rawCondition = 'any',
     modality: rawModality = 'any',
+    publishedSince: rawPublishedSince = 'last_week',
     searchUrl,
     listingUrls: rawListingUrls = [],
     maxResults,
@@ -544,6 +559,7 @@ const propertyType = normalizeChoice(
 const location = normalizeNullableString(rawLocation) || 'santiago-metropolitana';
 const condition = normalizeChoice(rawCondition, ['any', 'propiedades-usadas', 'propiedades-nuevas'], 'any');
 const modality = normalizeChoice(rawModality, ['any', 'propiedades-usadas', 'propiedades-nuevas', 'proyectos'], 'any');
+const publishedSince = normalizeChoice(rawPublishedSince, ['any', 'today', 'last_week'], 'last_week');
 const listingUrls = parseListingUrlsInput(rawListingUrls);
 const normalizedSearchUrl = normalizeNullableString(searchUrl);
 
@@ -584,7 +600,7 @@ if (searchMode === 'byListingUrl') {
         });
     }
 } else {
-    const initialSearchUrl = buildSearchUrl({
+    const baseSearchUrl = buildSearchUrl({
         operation,
         propertyType,
         location,
@@ -592,6 +608,7 @@ if (searchMode === 'byListingUrl') {
         modality,
         searchUrl: normalizedSearchUrl,
     });
+    const initialSearchUrl = applyPublishedSinceFilter(baseSearchUrl, publishedSince);
     seenSearchUrls.add(initialSearchUrl);
     await requestQueue.addRequest({
         url: initialSearchUrl,

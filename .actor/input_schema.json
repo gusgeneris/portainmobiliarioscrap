@@ -87,6 +87,18 @@
       ],
       "editor": "select"
     },
+    "publishedSince": {
+      "title": "Publicado desde",
+      "type": "string",
+      "description": "Filtro temporal nativo del buscador. Por defecto: última semana.",
+      "default": "last_week",
+      "enum": [
+        "any",
+        "today",
+        "last_week"
+      ],
+      "editor": "select"
+    },
     "currencyUnit": {
       "title": "Currency unit (alias)",
       "type": "string",
