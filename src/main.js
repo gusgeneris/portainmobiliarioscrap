@@ -74,9 +74,11 @@ const extractPhones = ($) => {
     });
 
     $('a[href*="wa.me/"], a[href*="whatsapp"]').each((_, el) => {
-        const href = $(el).attr('href') || '';
+        const href = decodeHtmlEntities($(el).attr('href') || '');
         const waMatch = href.match(/wa\.me\/(\d{8,15})/i);
         if (waMatch?.[1]) phones.add(normalizePhone(waMatch[1]));
+        const phoneParamMatch = href.match(/[?&]phone=(\d{8,15})/i);
+        if (phoneParamMatch?.[1]) phones.add(normalizePhone(phoneParamMatch[1]));
     });
 
     const bodyText = cleanText($('body').text());
@@ -112,6 +114,59 @@ const extractContactLinks = ($) => {
     }
 
     return [...links].filter(Boolean);
+};
+
+const buildDirectWhatsAppLink = (phone, listingUrl, title) => {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return null;
+    const digits = normalizedPhone.replace(/[^\d]/g, '');
+    if (!digits) return null;
+    const encodedMessage = encodeURIComponent(`Hola, tengo algunas preguntas sobre ${title || 'esta propiedad'}. ${listingUrl || ''}`.trim());
+    return `https://wa.me/${digits}?text=${encodedMessage}`;
+};
+
+const normalizeContactLink = (value) => {
+    const normalized = decodeHtmlEntities(cleanText(value));
+    if (!normalized) return null;
+    if (normalized.startsWith('//')) return `https:${normalized}`;
+    return normalized;
+};
+
+const isDirectWhatsAppLink = (link) => /wa\.me\/\d{8,15}/i.test(link || '') || /api\.whatsapp\.com\/send\?phone=\d{8,15}/i.test(link || '');
+
+const extractPhoneFromWhatsAppLink = (link) => {
+    const normalized = normalizeContactLink(link);
+    if (!normalized) return null;
+    const waMatch = normalized.match(/wa\.me\/(\d{8,15})/i);
+    if (waMatch?.[1]) return normalizePhone(waMatch[1]);
+    const phoneParamMatch = normalized.match(/[?&]phone=(\d{8,15})/i);
+    if (phoneParamMatch?.[1]) return normalizePhone(phoneParamMatch[1]);
+    return null;
+};
+
+const prioritizeContactLinks = ({ phones, contactLinks, listingUrl, title }) => {
+    const prioritized = [];
+    const seen = new Set();
+
+    const pushUnique = (candidate) => {
+        const normalized = normalizeContactLink(candidate);
+        if (!normalized) return;
+        if (seen.has(normalized)) return;
+        seen.add(normalized);
+        prioritized.push(normalized);
+    };
+
+    // Prefer direct WhatsApp links with explicit phone number.
+    for (const phone of phones || []) {
+        pushUnique(buildDirectWhatsAppLink(phone, listingUrl, title));
+    }
+
+    const directLinks = (contactLinks || []).filter((link) => isDirectWhatsAppLink(link));
+    const shareLinks = (contactLinks || []).filter((link) => !isDirectWhatsAppLink(link));
+    for (const link of directLinks) pushUnique(link);
+    for (const link of shareLinks) pushUnique(link);
+
+    return prioritized;
 };
 
 const detectContactAvailability = ($, phones, contactLinks) => {
@@ -535,8 +590,19 @@ const extractDetail = ($, request, overview) => {
     const priceInfo = parsePrice(priceText);
     const summary = parseSummaryByRegex(fullText);
     const phones = extractPhones($);
-    const contactLinks = extractContactLinks($);
-    const contactAvailability = detectContactAvailability($, phones, contactLinks);
+    const rawContactLinks = extractContactLinks($);
+    const contactLinks = prioritizeContactLinks({
+        phones,
+        contactLinks: rawContactLinks,
+        listingUrl: request.loadedUrl || request.url,
+        title: title || overview.propertyTitle,
+    });
+    const phonesFromLinks = (contactLinks || [])
+        .map((link) => extractPhoneFromWhatsAppLink(link))
+        .filter(Boolean);
+    const allPhones = [...new Set([...(phones || []), ...phonesFromLinks])];
+    const cleanedContactLinks = (contactLinks || []).filter((link) => !isDirectWhatsAppLink(link));
+    const contactAvailability = detectContactAvailability($, allPhones, cleanedContactLinks);
 
     return {
         ...overview,
@@ -556,10 +622,10 @@ const extractDetail = ($, request, overview) => {
         thumbnail: overview.thumbnail || imageList[0] || null,
         ...priceInfo,
         ...summary,
-        contactPhone: phones[0] || null,
-        contactPhones: phones,
-        contactLink: contactLinks[0] || null,
-        contactLinks,
+        contactPhone: allPhones[0] || null,
+        contactPhones: allPhones,
+        contactLink: cleanedContactLinks[0] || null,
+        contactLinks: cleanedContactLinks,
         contactAvailability,
     };
 };
