@@ -762,6 +762,7 @@ const buildFilters = (input) => ({
     // default; leave it opt-in so runs don't silently return empty.
     requireContactData: parseBoolean(input.requireContactData, false),
     publishedSince: normalizeChoice(input.publishedSince, ['any', 'today', 'last_week'], 'last_week'),
+    trustPortalPriceRange: parseBoolean(input.trustPortalPriceRange, true),
 });
 
 const withinRange = (value, min, max) => {
@@ -786,6 +787,7 @@ const matchesPublishedSince = (item, publishedSince) => {
 
 const matchesFilters = (item, filters) => {
     const currencyMatches =
+        filters.skipCurrencyValidation ||
         filters.priceCurrency === 'any' ||
         (item.currency && item.currency.toUpperCase() === filters.priceCurrency);
 
@@ -1333,6 +1335,16 @@ const browserListingCap = calculateBrowserListingCap(maxBrowserListings, maxResu
 const maxConsecutiveContactFailuresLimit = parsePositiveIntWithDefault(maxConsecutiveContactFailures, 6);
 const contactsCsvPath = normalizeNullableString(rawContactsCsvPath) || 'Contacto de Corredoras - Hoja 1.csv';
 const brokerContactsLookup = await loadBrokerContactsLookup(contactsCsvPath);
+const portalPriceRangeToken = buildPortalPriceRangeToken(filters);
+filters.skipCurrencyValidation =
+    filters.trustPortalPriceRange && searchMode === 'byPlace' && Boolean(portalPriceRangeToken);
+
+if (filters.skipCurrencyValidation) {
+    log.info(
+        `Currency post-filter disabled because URL PriceRange is active (${portalPriceRangeToken}). ` +
+            `Using portal-side price filtering as source of truth.`,
+    );
+}
 
 if (scrapeMode === 'overview' && publishedSince !== 'any') {
     log.warning(

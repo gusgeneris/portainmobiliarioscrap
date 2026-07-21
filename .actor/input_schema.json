@@ -251,6 +251,13 @@
       "default": "Contacto de Corredoras - Hoja 1.csv",
       "editor": "textfield"
     },
+    "trustPortalPriceRange": {
+      "title": "Trust portal-side price range filter",
+      "type": "boolean",
+      "description": "If true (default), when byPlace search URL already includes PriceRange_* token, the actor won't discard items just because currency label differs on card (e.g. CLP range URL returning UF-labeled listings).",
+      "default": true,
+      "editor": "checkbox"
+    },
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "type": "object",
