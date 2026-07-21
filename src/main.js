@@ -1016,7 +1016,7 @@ const extractOverviewItems = ($, pageNumber) => {
     }));
 };
 
-const enrichOverviewFromEmbeddedState = ($, item) => {
+const enrichOverviewFromEmbeddedState = ($, item, brokerContactsLookup = null) => {
     const id = item.id;
     if (!id) return item;
     const html = $.html();
@@ -1030,6 +1030,7 @@ const enrichOverviewFromEmbeddedState = ($, item) => {
     const locationMatch = chunk.match(/"type":"location","id":"location","location":\{"text":"(.*?)"/);
     const priceMatch = chunk.match(/"current_price":\{"value":([\d.]+),"currency":"([^"]+)"/);
     const attrsMatch = chunk.match(/"attributes_list":\{"separator":"[^"]*","texts":\[(.*?)\]\}/);
+    const sellerMatch = chunk.match(/"type":"seller","id":"seller","seller":\{"text":"(.*?)"/);
 
     let attributesText = '';
     if (attrsMatch?.[1]) {
@@ -1039,7 +1040,12 @@ const enrichOverviewFromEmbeddedState = ($, item) => {
 
     const title = cleanText(decodeJsonEscapedText(titleMatch?.[1])) || item.propertyTitle;
     const location = cleanText(decodeJsonEscapedText(locationMatch?.[1])) || item.location;
+    const sellerName = cleanText(decodeJsonEscapedText(sellerMatch?.[1])) || item.sellerName || null;
     const parsedByAttributes = parseSummaryByRegex(attributesText);
+    const csvBrokerContact = findBrokerContact(sellerName, brokerContactsLookup);
+    const mergedPhonesWithCsv = csvBrokerContact?.phone
+        ? [...new Set([...(item.contactPhones || []), csvBrokerContact.phone])]
+        : item.contactPhones || [];
 
     let rawPrice = item.rawPrice;
     let price = item.price;
@@ -1056,6 +1062,7 @@ const enrichOverviewFromEmbeddedState = ($, item) => {
         ...item,
         propertyTitle: title || null,
         location: location || null,
+        sellerName,
         rawPrice: rawPrice || null,
         price: price ?? null,
         currency: currency || null,
@@ -1064,6 +1071,18 @@ const enrichOverviewFromEmbeddedState = ($, item) => {
         parking: parsedByAttributes.parking ?? item.parking ?? null,
         useful_area: parsedByAttributes.useful_area ?? item.useful_area ?? null,
         total_area: parsedByAttributes.total_area ?? item.total_area ?? null,
+        contactPhone: mergedPhonesWithCsv[0] || item.contactPhone || null,
+        contactPhones: mergedPhonesWithCsv,
+        contactAvailability:
+            mergedPhonesWithCsv.length > 0 ? 'phone_visible' : item.contactAvailability || 'unknown',
+        contactSource:
+            mergedPhonesWithCsv.length > 0
+                ? csvBrokerContact?.phone
+                    ? 'csv'
+                    : item.contactSource || 'portal'
+                : item.contactSource || 'none',
+        contactMatchedBroker: csvBrokerContact?.brokerName || item.contactMatchedBroker || null,
+        contactMatchType: csvBrokerContact?.matchType || item.contactMatchType || null,
     };
 };
 
@@ -1505,6 +1524,10 @@ if (searchMode === 'byListingUrl') {
     });
     const searchUrlOrderedByRecent = applyRecentOrderSort(baseSearchUrl);
     const initialSearchUrl = applyPublishedSinceFilter(searchUrlOrderedByRecent, publishedSince);
+    log.info(
+        `Search URL prepared (ordered by recent): ${initialSearchUrl} ` +
+            `(publishedSince=${publishedSince}, searchMode=${searchMode})`,
+    );
     seenSearchUrls.add(initialSearchUrl);
     await requestQueue.addRequest({
         url: initialSearchUrl,
@@ -1527,7 +1550,7 @@ const crawler = new CheerioCrawler({
             let addedFromPage = 0;
             for (const rawOverview of overviews) {
                 if (outputCount >= maxResultsLimit) break;
-                const overview = enrichOverviewFromEmbeddedState($, rawOverview);
+                const overview = enrichOverviewFromEmbeddedState($, rawOverview, brokerContactsLookup);
                 const listingUrl = overview.url;
                 if (seenListingUrls.has(listingUrl)) continue;
                 seenListingUrls.add(listingUrl);
