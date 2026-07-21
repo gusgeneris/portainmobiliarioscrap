@@ -1,5 +1,6 @@
 import { Actor } from 'apify';
 import { CheerioCrawler, PlaywrightCrawler, log } from 'crawlee';
+import { readFile } from 'node:fs/promises';
 
 const BASE_URL = 'https://www.portalinmobiliario.com';
 const RESULTS_PER_PAGE = 48;
@@ -60,6 +61,172 @@ const normalizePhone = (value) => {
     if (digits.startsWith('56')) return `+${digits}`;
     if (digits.length === 9) return `+56${digits}`;
     return digits;
+};
+
+const normalizeBrokerName = (value) => {
+    const base = cleanText(String(value || ''))
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/&/g, ' y ')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return base || null;
+};
+
+const toCompactBrokerName = (normalizedName) => {
+    if (!normalizedName) return null;
+    const stopwords = new Set([
+        'propiedades',
+        'propiedad',
+        'inmobiliaria',
+        'inmobiliario',
+        'gestion',
+        'consultas',
+        'brokers',
+        'broker',
+        'spa',
+        'ltda',
+        'limitada',
+        'asesores',
+        'asociados',
+    ]);
+    const compact = normalizedName
+        .split(' ')
+        .filter((token) => token && !stopwords.has(token))
+        .join(' ')
+        .trim();
+    return compact || normalizedName;
+};
+
+const parseCsvRows = (csvText) => {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < csvText.length; i += 1) {
+        const char = csvText[i];
+        const next = csvText[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && next === '"') {
+                field += '"';
+                i += 1;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (char === ',' && !inQuotes) {
+            row.push(field);
+            field = '';
+            continue;
+        }
+
+        if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && next === '\n') i += 1;
+            row.push(field);
+            field = '';
+            if (row.some((cell) => cleanText(cell).length > 0)) rows.push(row);
+            row = [];
+            continue;
+        }
+
+        field += char;
+    }
+
+    row.push(field);
+    if (row.some((cell) => cleanText(cell).length > 0)) rows.push(row);
+    return rows;
+};
+
+const buildBrokerContactsLookup = (rows) => {
+    const exact = new Map();
+    const compact = new Map();
+    let loadedCount = 0;
+    let validPhoneCount = 0;
+
+    for (const row of rows) {
+        const brokerRaw = normalizeNullableString(row?.[0]);
+        const phoneRaw = normalizeNullableString(row?.[1]);
+
+        if (!brokerRaw) continue;
+        if (/^corredora$/i.test(brokerRaw)) continue;
+
+        loadedCount += 1;
+        const normalized = normalizeBrokerName(brokerRaw);
+        if (!normalized) continue;
+        const compactName = toCompactBrokerName(normalized);
+        const phone = normalizePhone(phoneRaw);
+
+        if (!phone) continue;
+        validPhoneCount += 1;
+
+        const entry = {
+            brokerName: brokerRaw,
+            normalizedName: normalized,
+            compactName,
+            phone,
+        };
+
+        if (!exact.has(normalized)) exact.set(normalized, entry);
+        if (compactName && !compact.has(compactName)) compact.set(compactName, entry);
+    }
+
+    return { exact, compact, loadedCount, validPhoneCount };
+};
+
+const loadBrokerContactsLookup = async (csvPath) => {
+    if (!csvPath) return null;
+    try {
+        const raw = await readFile(csvPath, 'utf8');
+        const rows = parseCsvRows(raw);
+        const lookup = buildBrokerContactsLookup(rows);
+        log.info(
+            `Broker contacts CSV loaded (${csvPath}): ${lookup.validPhoneCount} usable phones ` +
+                `from ${lookup.loadedCount} broker rows.`,
+        );
+        return lookup;
+    } catch (error) {
+        log.warning(`Could not load broker contacts CSV (${csvPath}): ${error.message}`);
+        return null;
+    }
+};
+
+const findBrokerContact = (sellerName, lookup) => {
+    if (!lookup || !sellerName) return null;
+    const normalizedSeller = normalizeBrokerName(sellerName);
+    if (!normalizedSeller) return null;
+
+    const compactSeller = toCompactBrokerName(normalizedSeller);
+    const directExact = lookup.exact.get(normalizedSeller);
+    if (directExact) return { ...directExact, matchType: 'exact' };
+
+    if (compactSeller) {
+        const directCompact = lookup.compact.get(compactSeller);
+        if (directCompact) return { ...directCompact, matchType: 'compact' };
+    }
+
+    if (compactSeller) {
+        let best = null;
+        for (const entry of lookup.compact.values()) {
+            const candidate = entry.compactName;
+            if (!candidate) continue;
+            if (
+                compactSeller === candidate ||
+                compactSeller.includes(candidate) ||
+                candidate.includes(compactSeller)
+            ) {
+                if (!best || candidate.length > best.compactName.length) best = entry;
+            }
+        }
+        if (best) return { ...best, matchType: 'contains' };
+    }
+
+    return null;
 };
 
 const extractPhones = ($) => {
@@ -692,6 +859,19 @@ const extractPublishedRecencyText = ($) => {
     return match ? cleanText(match[1]) : null;
 };
 
+const extractSellerName = ($) => {
+    const fromProfileLink = cleanText($('a[href="#seller_profile"]').first().text());
+    if (fromProfileLink) return fromProfileLink;
+
+    const html = $.html();
+    const scriptMatch = html.match(/Publicado por \{action\}[\s\S]{0,600}?"label":\{"text":"([^"]{2,80})"/i);
+    if (scriptMatch?.[1]) return cleanText(decodeJsonEscapedText(scriptMatch[1]));
+
+    const bodyText = cleanText($('body').text());
+    const fallbackTextMatch = bodyText.match(/Publicado por\s+([^\|<."{}]{2,80})/i);
+    return fallbackTextMatch ? cleanText(fallbackTextMatch[1]) : null;
+};
+
 const currencyFromPortalCode = (value) => {
     if (value === 'CLF') return 'UF';
     if (value === 'CLP') return 'CLP';
@@ -896,6 +1076,23 @@ const buildSearchUrl = ({ operation, propertyType, location, condition, modality
     return `${BASE_URL}/${segments.map((segment) => segment.replace(/^\/+|\/+$/g, '')).join('/')}`;
 };
 
+const applyRecentOrderSort = (url) => {
+    if (!url) return url;
+    const normalized = decodeHtmlEntities(url);
+    try {
+        const parsed = new URL(normalized);
+        const path = parsed.pathname.replace(/\/$/, '');
+        parsed.pathname = /_OrderId_[^/]+_NoIndex_True/i.test(path)
+            ? path.replace(/_OrderId_[^/]+_NoIndex_True/i, '_OrderId_BEGINS*DESC_NoIndex_True')
+            : `${path}/_OrderId_BEGINS*DESC_NoIndex_True`;
+        return parsed.toString();
+    } catch {
+        return /_OrderId_[^/_]+_NoIndex_True/i.test(normalized)
+            ? normalized.replace(/_OrderId_[^/_]+_NoIndex_True/i, '_OrderId_BEGINS*DESC_NoIndex_True')
+            : `${normalized.replace(/\/$/, '')}/_OrderId_BEGINS*DESC_NoIndex_True`;
+    }
+};
+
 // The search UI only offers a real "Publicados hoy" facet, applied as the path segment
 // `_PublishedToday_YES` (verified from the site's own facet payload). There is no `since`
 // query parameter and no "last week" facet at all — the previous implementation set
@@ -928,7 +1125,7 @@ const buildNextPageUrl = (currentUrl, pageNumber) => {
     return `${withoutPreviousOffset}/_Desde_${offset}_NoIndex_True`;
 };
 
-const extractDetail = ($, request, overview) => {
+const extractDetail = ($, request, overview, brokerContactsLookup) => {
     const fullText = cleanText($('body').text());
     const jsonLd = getJsonLdObjects($);
     const product = jsonLd.find((obj) => {
@@ -970,9 +1167,24 @@ const extractDetail = ($, request, overview) => {
     const allPhones = [...new Set([...(phones || []), ...phonesFromLinks])];
     // Keep only direct WhatsApp links with explicit phone numbers.
     const directContactLinks = [...new Set((contactLinks || []).filter((link) => isDirectWhatsAppLink(link)))];
-    const contactAvailability = detectContactAvailability($, allPhones, directContactLinks);
+    const sellerName = extractSellerName($);
+    const csvBrokerContact = findBrokerContact(sellerName, brokerContactsLookup);
+    const mergedPhonesWithCsv = csvBrokerContact?.phone
+        ? [...new Set([...(allPhones || []), csvBrokerContact.phone])]
+        : allPhones;
+    const contactAvailability = detectContactAvailability($, mergedPhonesWithCsv, directContactLinks);
     const publishedRecencyRawText = extractPublishedRecencyText($);
     const publishedRecency = parsePublishedRecency(publishedRecencyRawText);
+    const contactSource =
+        mergedPhonesWithCsv.length > 0
+            ? allPhones.length > 0
+                ? 'portal'
+                : csvBrokerContact?.phone
+                  ? 'csv'
+                  : 'portal'
+            : directContactLinks.length > 0
+              ? 'portal'
+              : 'none';
 
     return {
         ...overview,
@@ -992,11 +1204,15 @@ const extractDetail = ($, request, overview) => {
         thumbnail: overview.thumbnail || imageList[0] || null,
         ...priceInfo,
         ...summary,
-        contactPhone: allPhones[0] || null,
-        contactPhones: allPhones,
+        sellerName: sellerName || null,
+        contactPhone: mergedPhonesWithCsv[0] || null,
+        contactPhones: mergedPhonesWithCsv,
         contactLink: directContactLinks[0] || null,
         contactLinks: directContactLinks,
         contactAvailability,
+        contactSource,
+        contactMatchedBroker: csvBrokerContact?.brokerName || null,
+        contactMatchType: csvBrokerContact?.matchType || null,
         publishedRecencyText: publishedRecencyRawText || null,
         publishedRecencyBucket: publishedRecency.bucket,
         publishedRecencyDaysAgo: publishedRecency.daysAgo,
@@ -1025,6 +1241,7 @@ const {
     browserConcurrency,
     maxBrowserListings,
     maxConsecutiveContactFailures,
+    contactsCsvPath: rawContactsCsvPath = 'Contacto de Corredoras - Hoja 1.csv',
 } = input;
 
 const includeDetailsEnabled = parseBoolean(includeDetails, true);
@@ -1051,6 +1268,8 @@ const shouldResolveContactViaBrowser = parseBoolean(resolveContactViaBrowser, fa
 const browserConcurrencyLimit = normalizeBrowserConcurrency(browserConcurrency);
 const browserListingCap = calculateBrowserListingCap(maxBrowserListings, maxResultsLimit);
 const maxConsecutiveContactFailuresLimit = parsePositiveIntWithDefault(maxConsecutiveContactFailures, 6);
+const contactsCsvPath = normalizeNullableString(rawContactsCsvPath) || 'Contacto de Corredoras - Hoja 1.csv';
+const brokerContactsLookup = await loadBrokerContactsLookup(contactsCsvPath);
 
 if (scrapeMode === 'overview' && publishedSince !== 'any') {
     log.warning(
@@ -1205,7 +1424,7 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
             consecutiveContactFailures = 0;
 
             const $ = await parseWithCheerio();
-            const detail = extractDetail($, request, overview);
+            const detail = extractDetail($, request, overview, brokerContactsLookup);
 
             if (realContact?.phone) {
                 const mergedPhones = [...new Set([realContact.phone, ...(detail.contactPhones || [])])];
@@ -1219,6 +1438,9 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
             }
 
             detail.contactAvailability = detectContactAvailability($, detail.contactPhones, detail.contactLinks);
+            if (realContact?.phone || realContact?.target) {
+                detail.contactSource = 'portal';
+            }
 
             if (!matchesFilters(detail, filters)) {
                 crawlerLog.info(`Filtered out: ${detail.id || detail.url}`);
@@ -1281,7 +1503,8 @@ if (searchMode === 'byListingUrl') {
         modality,
         searchUrl: normalizedSearchUrl,
     });
-    const initialSearchUrl = applyPublishedSinceFilter(baseSearchUrl, publishedSince);
+    const searchUrlOrderedByRecent = applyRecentOrderSort(baseSearchUrl);
+    const initialSearchUrl = applyPublishedSinceFilter(searchUrlOrderedByRecent, publishedSince);
     seenSearchUrls.add(initialSearchUrl);
     await requestQueue.addRequest({
         url: initialSearchUrl,
@@ -1342,7 +1565,7 @@ const crawler = new CheerioCrawler({
         }
 
         if (request.userData.label === 'DETAIL') {
-            const detail = extractDetail($, request, request.userData.overview || {});
+            const detail = extractDetail($, request, request.userData.overview || {}, brokerContactsLookup);
             if (!matchesFilters(detail, filters)) {
                 crawlerLog.info(`Filtered out: ${detail.id || detail.url}`);
                 return;

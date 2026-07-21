@@ -244,6 +244,13 @@
       "description": "Only when resolveContactViaBrowser=true. Stops the browser crawler early after this many consecutive listings without a direct contact, to avoid wasting time when most listings are blocked (e.g. by recaptcha). Default 6.",
       "editor": "textfield"
     },
+    "contactsCsvPath": {
+      "title": "Broker contacts CSV path",
+      "type": "string",
+      "description": "Optional CSV file path used to enrich contact phones by matching seller/corredora names. Defaults to 'Contacto de Corredoras - Hoja 1.csv'.",
+      "default": "Contacto de Corredoras - Hoja 1.csv",
+      "editor": "textfield"
+    },
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "type": "object",
