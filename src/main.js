@@ -1095,6 +1095,24 @@ const buildSearchUrl = ({ operation, propertyType, location, condition, modality
     return `${BASE_URL}/${segments.map((segment) => segment.replace(/^\/+|\/+$/g, '')).join('/')}`;
 };
 
+const toPortalPriceCurrency = (priceCurrency) => {
+    if (priceCurrency === 'UF') return 'CLF';
+    if (priceCurrency === 'CLP') return 'CLP';
+    return null;
+};
+
+const buildPortalPriceRangeToken = ({ priceCurrency, minPrice, maxPrice }) => {
+    const portalCurrency = toPortalPriceCurrency(priceCurrency);
+    if (!portalCurrency) return null;
+    if (maxPrice == null) return null;
+
+    const normalizedMin = minPrice == null ? 0 : Math.max(0, Math.floor(minPrice));
+    const normalizedMax = Math.max(0, Math.floor(maxPrice));
+    if (normalizedMax < normalizedMin) return null;
+
+    return `PriceRange_${normalizedMin}${portalCurrency}-${normalizedMax}${portalCurrency}`;
+};
+
 const applyRecentOrderSort = (url) => {
     if (!url) return url;
     const normalized = decodeHtmlEntities(url);
@@ -1109,6 +1127,32 @@ const applyRecentOrderSort = (url) => {
         return /_OrderId_[^/_]+_NoIndex_True/i.test(normalized)
             ? normalized.replace(/_OrderId_[^/_]+_NoIndex_True/i, '_OrderId_BEGINS*DESC_NoIndex_True')
             : `${normalized.replace(/\/$/, '')}/_OrderId_BEGINS*DESC_NoIndex_True`;
+    }
+};
+
+const applyPriceRangeFilter = (url, filters) => {
+    if (!url) return url;
+    const priceRangeToken = buildPortalPriceRangeToken(filters || {});
+    if (!priceRangeToken) return url;
+
+    const injectToken = (pathValue) => {
+        const cleanPath = pathValue.replace(/\/$/, '');
+        const withoutExistingPriceRange = cleanPath
+            .replace(/_PriceRange_[^/]+?(?=_NoIndex_True)/i, '')
+            .replace(/_PriceRange_[^/]+$/i, '');
+
+        if (/_NoIndex_True$/i.test(withoutExistingPriceRange)) {
+            return withoutExistingPriceRange.replace(/_NoIndex_True$/i, `_${priceRangeToken}_NoIndex_True`);
+        }
+        return `${withoutExistingPriceRange}/_${priceRangeToken}_NoIndex_True`;
+    };
+
+    try {
+        const parsed = new URL(decodeHtmlEntities(url));
+        parsed.pathname = injectToken(parsed.pathname);
+        return parsed.toString();
+    } catch {
+        return injectToken(decodeHtmlEntities(url));
     }
 };
 
@@ -1523,10 +1567,12 @@ if (searchMode === 'byListingUrl') {
         searchUrl: normalizedSearchUrl,
     });
     const searchUrlOrderedByRecent = applyRecentOrderSort(baseSearchUrl);
-    const initialSearchUrl = applyPublishedSinceFilter(searchUrlOrderedByRecent, publishedSince);
+    const searchUrlWithPriceRange = applyPriceRangeFilter(searchUrlOrderedByRecent, filters);
+    const initialSearchUrl = applyPublishedSinceFilter(searchUrlWithPriceRange, publishedSince);
     log.info(
         `Search URL prepared (ordered by recent): ${initialSearchUrl} ` +
-            `(publishedSince=${publishedSince}, searchMode=${searchMode})`,
+            `(publishedSince=${publishedSince}, searchMode=${searchMode}, priceCurrency=${filters.priceCurrency}, ` +
+            `minPrice=${filters.minPrice ?? 'n/a'}, maxPrice=${filters.maxPrice ?? 'n/a'})`,
     );
     seenSearchUrls.add(initialSearchUrl);
     await requestQueue.addRequest({
