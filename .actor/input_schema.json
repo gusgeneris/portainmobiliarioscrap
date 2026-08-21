@@ -114,7 +114,7 @@
     "priceCurrency": {
       "title": "Moneda del precio",
       "type": "string",
-      "description": "Moneda para aplicar filtros de minPrice/maxPrice.",
+      "description": "Moneda de minPrice/maxPrice. Si el aviso viene en la otra (UF vs CLP), se convierte con la UF del día.",
       "default": "any",
       "enum": [
         "any",
@@ -126,13 +126,13 @@
     "minPrice": {
       "title": "Precio mínimo",
       "type": "string",
-      "description": "Filtro por precio mínimo en la moneda del aviso (acepta string o número).",
+      "description": "Precio mínimo en priceCurrency (UF o CLP). Si el aviso está en la otra moneda, se convierte antes de comparar.",
       "editor": "textfield"
     },
     "maxPrice": {
       "title": "Precio máximo",
       "type": "string",
-      "description": "Filtro por precio máximo en la moneda del aviso (acepta string o número).",
+      "description": "Precio máximo en priceCurrency (UF o CLP). Si el aviso está en la otra moneda, se convierte antes de comparar.",
       "editor": "textfield"
     },
     "minBedrooms": {
@@ -254,7 +254,7 @@
     "trustPortalPriceRange": {
       "title": "Trust portal-side price range filter",
       "type": "boolean",
-      "description": "If true (default), when byPlace search URL already includes PriceRange_* token, the actor won't discard items just because currency label differs on card (e.g. CLP range URL returning UF-labeled listings).",
+      "description": "If true (default) and byPlace already has PriceRange_*, mixed UF/CLP cards are converted (or trusted if the UF rate is unavailable) instead of being discarded.",
       "default": true,
       "editor": "checkbox"
     },

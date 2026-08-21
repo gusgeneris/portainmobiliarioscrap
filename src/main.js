@@ -765,12 +765,63 @@ const buildFilters = (input) => ({
     trustPortalPriceRange: parseBoolean(input.trustPortalPriceRange, true),
 });
 
+const UF_INDICATOR_URL = 'https://mindicador.cl/api/uf';
+
+const fetchUfToClpRate = async () => {
+    try {
+        const response = await fetch(UF_INDICATOR_URL, { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) return null;
+        const data = await response.json();
+        const rawValue = data?.serie?.[0]?.valor ?? data?.valor;
+        const rate = Number(rawValue);
+        return Number.isFinite(rate) && rate > 0 ? rate : null;
+    } catch {
+        return null;
+    }
+};
+
+const convertBetweenUfAndClp = (price, fromCurrency, toCurrency, ufToClpRate) => {
+    if (price == null || ufToClpRate == null || ufToClpRate <= 0) return null;
+    const from = (fromCurrency || '').toUpperCase();
+    const to = (toCurrency || '').toUpperCase();
+    if (!from || !to || from === to) return price;
+    if (from === 'UF' && to === 'CLP') return price * ufToClpRate;
+    if (from === 'CLP' && to === 'UF') return price / ufToClpRate;
+    return null;
+};
+
 const withinRange = (value, min, max) => {
     if (min == null && max == null) return true;
     if (value == null) return false;
     if (min != null && value < min) return false;
     if (max != null && value > max) return false;
     return true;
+};
+
+const matchesPriceFilter = (item, filters) => {
+    if (filters.minPrice == null && filters.maxPrice == null) return true;
+    if (item.price == null) return false;
+
+    const itemCurrency = (item.currency || '').toUpperCase();
+    const filterCurrency = filters.priceCurrency || 'any';
+    const sameOrUnknownCurrency =
+        filterCurrency === 'any' || !itemCurrency || itemCurrency === filterCurrency;
+
+    if (sameOrUnknownCurrency) {
+        return withinRange(item.price, filters.minPrice, filters.maxPrice);
+    }
+
+    const convertedPrice = convertBetweenUfAndClp(
+        item.price,
+        itemCurrency,
+        filterCurrency,
+        filters.ufToClpRate,
+    );
+    if (convertedPrice == null) {
+        // Portal already applied PriceRange_*; don't drop mixed-currency cards if FX is unavailable.
+        return Boolean(filters.skipCurrencyValidation);
+    }
+    return withinRange(convertedPrice, filters.minPrice, filters.maxPrice);
 };
 
 // The site does not expose a "last week" search facet nor a publish date on search-result
@@ -786,15 +837,9 @@ const matchesPublishedSince = (item, publishedSince) => {
 };
 
 const matchesFilters = (item, filters) => {
-    const currencyMatches =
-        filters.skipCurrencyValidation ||
-        filters.priceCurrency === 'any' ||
-        (item.currency && item.currency.toUpperCase() === filters.priceCurrency);
-
-    if (!currencyMatches) return false;
+    if (!matchesPriceFilter(item, filters)) return false;
 
     return (
-        withinRange(item.price, filters.minPrice, filters.maxPrice) &&
         withinRange(item.bedrooms, filters.minBedrooms, filters.maxBedrooms) &&
         withinRange(item.bathrooms, filters.minBathrooms, filters.maxBathrooms) &&
         withinRange(item.parking, filters.minParking, filters.maxParking) &&
@@ -1339,10 +1384,23 @@ const portalPriceRangeToken = buildPortalPriceRangeToken(filters);
 filters.skipCurrencyValidation =
     filters.trustPortalPriceRange && searchMode === 'byPlace' && Boolean(portalPriceRangeToken);
 
+const needsUfRate =
+    (filters.minPrice != null || filters.maxPrice != null) &&
+    (filters.priceCurrency === 'UF' || filters.priceCurrency === 'CLP');
+filters.ufToClpRate = needsUfRate ? await fetchUfToClpRate() : null;
+
+if (filters.ufToClpRate) {
+    log.info(`UF rate for price conversion: ${filters.ufToClpRate} CLP.`);
+} else if (needsUfRate) {
+    log.warning(
+        'Could not fetch UF rate from mindicador.cl; mixed UF/CLP prices will fall back to the portal PriceRange when available.',
+    );
+}
+
 if (filters.skipCurrencyValidation) {
     log.info(
-        `Currency post-filter disabled because URL PriceRange is active (${portalPriceRangeToken}). ` +
-            `Using portal-side price filtering as source of truth.`,
+        `Portal PriceRange is active (${portalPriceRangeToken}). ` +
+            'Mixed UF/CLP cards are converted to the filter currency before min/max comparison.',
     );
 }
 
