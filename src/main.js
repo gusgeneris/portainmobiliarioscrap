@@ -1736,10 +1736,15 @@ const crawler = new CheerioCrawler({
     requestQueue,
     proxyConfiguration: proxy,
     maxRequestRetries: 2,
-    additionalHttpHeaders: {
-        'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    },
+    preNavigationHooks: [
+        async ({ request }) => {
+            request.headers = {
+                ...request.headers,
+                'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
+                Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            };
+        },
+    ],
     async requestHandler({ request, $, log: crawlerLog }) {
         if (outputCount >= maxResultsLimit) return;
 
