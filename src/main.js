@@ -329,10 +329,9 @@ const dismissCookieBanner = async (page) => {
     return false;
 };
 
-// Apify's default proxy pool (no groups specified) is datacenter, which reCAPTCHA Enterprise
-// scores very poorly against, essentially guaranteeing a visible challenge on every attempt.
-// Browser-based contact resolution needs residential IPs to have a realistic success rate.
-const buildBrowserProxyConfiguration = async (rawProxyConfiguration) => {
+// Apify's default proxy pool (no groups specified) is datacenter, which Portalinmobiliario
+// often serves with empty/blocked search pages. Prefer Chile residential IPs.
+const buildChileProxyConfiguration = async (rawProxyConfiguration, contextLabel = 'Crawler') => {
     if (rawProxyConfiguration) {
         return Actor.createProxyConfiguration(rawProxyConfiguration);
     }
@@ -341,17 +340,20 @@ const buildBrowserProxyConfiguration = async (rawProxyConfiguration) => {
             groups: ['RESIDENTIAL'],
             countryCode: 'CL',
         });
-        log.info('Browser mode: using RESIDENTIAL proxy group (countryCode=CL) to reduce recaptcha challenges.');
+        log.info(`${contextLabel}: using RESIDENTIAL proxy group (countryCode=CL).`);
         return residentialProxy;
     } catch (err) {
         log.warning(
-            `Browser mode: could not enable RESIDENTIAL proxy (${err.message}). Falling back to the default ` +
-                'datacenter pool, which is much more likely to trigger recaptcha challenges on every listing. ' +
+            `${contextLabel}: could not enable RESIDENTIAL proxy (${err.message}). Falling back to the default ` +
+                'datacenter pool, which may return empty search pages on portalinmobiliario.com. ' +
                 'Provide "proxyConfiguration" with residential access to fix this.',
         );
         return Actor.createProxyConfiguration();
     }
 };
+
+const buildBrowserProxyConfiguration = (rawProxyConfiguration) =>
+    buildChileProxyConfiguration(rawProxyConfiguration, 'Browser mode');
 
 const hasRecaptchaChallenge = async (page) => {
     const count = await page
@@ -799,6 +801,8 @@ const withinRange = (value, min, max) => {
 };
 
 const matchesPriceFilter = (item, filters) => {
+    // When the search URL already carries PriceRange_*, Portal filtered server-side — don't re-compare.
+    if (filters.skipPricePostFilter) return true;
     if (filters.minPrice == null && filters.maxPrice == null) return true;
     if (item.price == null) return false;
 
@@ -817,10 +821,7 @@ const matchesPriceFilter = (item, filters) => {
         filterCurrency,
         filters.ufToClpRate,
     );
-    if (convertedPrice == null) {
-        // Portal already applied PriceRange_*; don't drop mixed-currency cards if FX is unavailable.
-        return Boolean(filters.skipCurrencyValidation);
-    }
+    if (convertedPrice == null) return false;
     return withinRange(convertedPrice, filters.minPrice, filters.maxPrice);
 };
 
@@ -987,6 +988,82 @@ const extractListingUrlsFromSearch = ($) => {
     return [...new Set(results)];
 };
 
+const formatCompactMlcId = (compactId) => {
+    const match = String(compactId || '').match(/^(MLC)(\d+)$/i);
+    return match ? `${match[1]}-${match[2]}` : compactId;
+};
+
+const extractOverviewItemsFromEmbeddedState = ($, pageNumber) => {
+    const html = $.html();
+    const seen = new Set();
+    const output = [];
+
+    for (const match of html.matchAll(/"id":"(MLC\d+)"/gi)) {
+        const compactId = match[1].toUpperCase();
+        if (seen.has(compactId)) continue;
+
+        const markerIndex = match.index ?? html.indexOf(`"id":"${compactId}"`);
+        if (markerIndex < 0) continue;
+
+        const chunk = html.slice(markerIndex, markerIndex + 7000);
+        const urlMatch = chunk.match(/"url":"([^"]+)"/);
+        if (!urlMatch?.[1]) continue;
+
+        const decodedUrl = decodeJsonEscapedText(urlMatch[1]);
+        if (!decodedUrl || !/MLC-\d+/i.test(decodedUrl)) continue;
+
+        const url = normalizeListingUrl(decodedUrl);
+        if (!url || seen.has(url)) continue;
+
+        seen.add(compactId);
+        seen.add(url);
+
+        const id = formatCompactMlcId(compactId);
+        let price = null;
+        let currency = null;
+        let rawPrice = null;
+
+        const signalPriceMatch = chunk.match(/"signal":\{[^}]*"price":([\d.]+)[^}]*"currency":"([^"]+)"/);
+        const currentPriceMatch = chunk.match(/"current_price":\{"value":([\d.]+),"currency":"([^"]+)"/);
+        const priceMatch = signalPriceMatch || currentPriceMatch;
+        if (priceMatch) {
+            price = Number(priceMatch[1]);
+            currency = currencyFromPortalCode(priceMatch[2]);
+            rawPrice = currency ? `${price} ${currency}` : String(price);
+        }
+
+        const highlightMatch = chunk.match(/"float_highlight":\{"text":"(.*?)"/);
+        const highlightText = highlightMatch ? decodeJsonEscapedText(highlightMatch[1]) : null;
+        const publishedRecency = parsePublishedRecency(highlightText);
+
+        output.push({
+            source: 'overview',
+            page: pageNumber,
+            id,
+            url,
+            propertyTitle: null,
+            location: null,
+            thumbnail: null,
+            rawPrice,
+            price,
+            currency,
+            bedrooms: null,
+            bathrooms: null,
+            parking: null,
+            contactPhone: null,
+            contactPhones: [],
+            contactLink: null,
+            contactLinks: [],
+            contactAvailability: 'unknown',
+            publishedRecencyText: highlightText || null,
+            publishedRecencyBucket: publishedRecency.bucket,
+            publishedRecencyDaysAgo: publishedRecency.daysAgo,
+        });
+    }
+
+    return output;
+};
+
 const extractOverviewItems = ($, pageNumber) => {
     const seen = new Set();
     const output = [];
@@ -1036,6 +1113,9 @@ const extractOverviewItems = ($, pageNumber) => {
     });
 
     if (output.length > 0) return output;
+
+    const embeddedItems = extractOverviewItemsFromEmbeddedState($, pageNumber);
+    if (embeddedItems.length > 0) return embeddedItems;
 
     // Fallback for layouts where cards are not easily identifiable.
     return extractListingUrlsFromSearch($).map((listingUrl) => ({
@@ -1381,26 +1461,27 @@ const maxConsecutiveContactFailuresLimit = parsePositiveIntWithDefault(maxConsec
 const contactsCsvPath = normalizeNullableString(rawContactsCsvPath) || 'Contacto de Corredoras - Hoja 1.csv';
 const brokerContactsLookup = await loadBrokerContactsLookup(contactsCsvPath);
 const portalPriceRangeToken = buildPortalPriceRangeToken(filters);
-filters.skipCurrencyValidation =
+filters.skipPricePostFilter =
     filters.trustPortalPriceRange && searchMode === 'byPlace' && Boolean(portalPriceRangeToken);
 
 const needsUfRate =
+    !filters.skipPricePostFilter &&
     (filters.minPrice != null || filters.maxPrice != null) &&
-    (filters.priceCurrency === 'UF' || filters.priceCurrency === 'CLP');
+    filters.priceCurrency !== 'any';
 filters.ufToClpRate = needsUfRate ? await fetchUfToClpRate() : null;
 
 if (filters.ufToClpRate) {
-    log.info(`UF rate for price conversion: ${filters.ufToClpRate} CLP.`);
-} else if (needsUfRate) {
-    log.warning(
-        'Could not fetch UF rate from mindicador.cl; mixed UF/CLP prices will fall back to the portal PriceRange when available.',
-    );
+    log.info(`UF rate for mixed-currency post-filter: ${filters.ufToClpRate} CLP per UF.`);
 }
 
-if (filters.skipCurrencyValidation) {
+if (filters.skipPricePostFilter) {
     log.info(
         `Portal PriceRange is active (${portalPriceRangeToken}). ` +
-            'Mixed UF/CLP cards are converted to the filter currency before min/max comparison.',
+            'Skipping local min/max price filtering — trusting portal-side PriceRange in the search URL.',
+    );
+} else if (needsUfRate && !filters.ufToClpRate) {
+    log.warning(
+        'Could not fetch UF rate from mindicador.cl; mixed UF/CLP listings may be filtered out incorrectly.',
     );
 }
 
@@ -1603,7 +1684,7 @@ if (searchMode === 'byListingUrl' && scrapeMode === 'detail' && shouldResolveCon
     process.exit(0);
 }
 
-const proxy = await Actor.createProxyConfiguration(proxyConfiguration);
+const proxy = await buildChileProxyConfiguration(proxyConfiguration, 'Search crawler');
 const requestQueue = await Actor.openRequestQueue();
 
 const seenSearchUrls = new Set();
@@ -1655,13 +1736,26 @@ const crawler = new CheerioCrawler({
     requestQueue,
     proxyConfiguration: proxy,
     maxRequestRetries: 2,
+    additionalHttpHeaders: {
+        'Accept-Language': 'es-CL,es;q=0.9,en;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
     async requestHandler({ request, $, log: crawlerLog }) {
         if (outputCount >= maxResultsLimit) return;
 
         if (request.userData.label === 'SEARCH') {
             const pageNumber = request.userData.page || 1;
             const overviews = extractOverviewItems($, pageNumber);
-            crawlerLog.info(`Search page ${pageNumber}: found ${overviews.length} listing cards.`);
+            const resultCountText = cleanText($('body').text()).match(/([\d.]+)\s+resultados?/i)?.[0] || null;
+            crawlerLog.info(
+                `Search page ${pageNumber}: found ${overviews.length} listing cards` +
+                    `${resultCountText ? ` (page text: ${resultCountText})` : ''}.`,
+            );
+            if (overviews.length === 0 && resultCountText) {
+                crawlerLog.warning(
+                    'Search page reports results but parser found none. Check proxy/residential access or page layout.',
+                );
+            }
 
             let addedFromPage = 0;
             for (const rawOverview of overviews) {

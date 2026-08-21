@@ -254,7 +254,7 @@
     "trustPortalPriceRange": {
       "title": "Trust portal-side price range filter",
       "type": "boolean",
-      "description": "If true (default) and byPlace already has PriceRange_*, mixed UF/CLP cards are converted (or trusted if the UF rate is unavailable) instead of being discarded.",
+      "description": "If true (default) and byPlace URL includes PriceRange_*, skip local min/max price filtering and trust the portal filter.",
       "default": true,
       "editor": "checkbox"
     },
